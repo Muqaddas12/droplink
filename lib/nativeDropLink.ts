@@ -13,6 +13,12 @@ export type ServerInfo = {
   url: string;
 };
 
+export type NetworkInfo = {
+  connected: boolean;
+  ip: string | null;
+  type: string;
+};
+
 type DropLinkNativeModule = {
   startServer(
     files: ShareFile[]
@@ -21,6 +27,8 @@ type DropLinkNativeModule = {
   stopServer(): Promise<boolean>;
 
   getLocalIp(): Promise<string>;
+
+  getNetworkInfo(): Promise<NetworkInfo>;
 };
 
 const DropLink =
@@ -58,4 +66,10 @@ export async function getLocalIp(): Promise<string> {
   checkAndroid();
 
   return DropLink.getLocalIp();
+}
+
+export async function getNetworkInfo(): Promise<NetworkInfo> {
+  checkAndroid();
+
+  return DropLink.getNetworkInfo();
 }

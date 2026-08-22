@@ -8,10 +8,13 @@ import {
 } from 'react-native';
 
 import { pickFiles } from '@/lib/nativeFilePicker';
+
 import {
   startLocalServer,
   stopLocalServer,
+  getNetworkInfo,
   ServerInfo,
+  NetworkInfo,
 } from '@/lib/nativeDropLink';
 
 export default function TabOneScreen() {
@@ -19,10 +22,41 @@ export default function TabOneScreen() {
   const [serverInfo, setServerInfo] =
     useState<ServerInfo | null>(null);
 
+  const [networkInfo, setNetworkInfo] =
+    useState<NetworkInfo | null>(null);
+
   const handleShare = async () => {
+
     try {
 
-      const files = await pickFiles();
+      /*
+       * Check network first.
+       */
+      const network =
+        await getNetworkInfo();
+
+      console.log(
+        'NETWORK INFO:',
+        network
+      );
+
+      setNetworkInfo(network);
+
+      if (!network.connected) {
+
+        Alert.alert(
+          'No Network',
+          'Please connect to Wi-Fi or enable a hotspot before sharing.'
+        );
+
+        return;
+      }
+
+      /*
+       * Select files.
+       */
+      const files =
+        await pickFiles();
 
       if (files.length === 0) {
         return;
@@ -33,6 +67,9 @@ export default function TabOneScreen() {
         files
       );
 
+      /*
+       * Start zero-copy server.
+       */
       const info =
         await startLocalServer(files);
 
@@ -70,6 +107,10 @@ export default function TabOneScreen() {
 
       setServerInfo(null);
 
+      console.log(
+        'SERVER STOPPED'
+      );
+
     } catch (error) {
 
       console.error(
@@ -103,6 +144,33 @@ export default function TabOneScreen() {
           Select & Share
         </Text>
       </Pressable>
+
+      {networkInfo !== null && (
+        <View style={styles.networkContainer}>
+
+          <Text style={styles.networkTitle}>
+            Network
+          </Text>
+
+          <Text style={styles.networkText}>
+            Status:{' '}
+            {networkInfo.connected
+              ? 'Connected'
+              : 'Disconnected'}
+          </Text>
+
+          <Text style={styles.networkText}>
+            Type: {networkInfo.type}
+          </Text>
+
+          {networkInfo.ip !== null && (
+            <Text style={styles.networkText}>
+              IP: {networkInfo.ip}
+            </Text>
+          )}
+
+        </View>
+      )}
 
       {serverInfo !== null && (
         <View style={styles.serverContainer}>
@@ -168,8 +236,28 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
+  networkContainer: {
+    marginTop: 20,
+    width: '100%',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: '#eef2ff',
+  },
+
+  networkTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+
+  networkText: {
+    marginTop: 3,
+    color: '#4b5563',
+  },
+
   serverContainer: {
-    marginTop: 28,
+    marginTop: 20,
     width: '100%',
     alignItems: 'center',
     padding: 20,
