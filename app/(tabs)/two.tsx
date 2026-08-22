@@ -114,11 +114,14 @@ export default function TabTwoScreen() {
       setServerInfo(info);
       setPaused(false);
 
-      Alert.alert(
-        'Internet Server Started',
-        `Port: ${info.port}\n\n${info.files.length} file(s) ready.`
-      );
-
+     Alert.alert(
+  'Internet Server Started',
+  `Network: ${info.networkType}\n\n` +
+  `IP: ${info.ip}\n\n` +
+  `Port: ${info.port}\n\n` +
+  `URL:\n${info.url}\n\n` +
+  `${info.files.length} file(s) ready.`
+);
     } catch (error) {
 
       console.error(
@@ -400,20 +403,38 @@ export default function TabTwoScreen() {
 
             <View style={styles.serverBox}>
 
-              <Text style={styles.serverTitle}>
-                Internet Server Running
-              </Text>
+  <Text style={styles.serverTitle}>
+    Internet Server Running
+  </Text>
 
-              <Text style={styles.portText}>
-                Port: {serverInfo.port}
-              </Text>
+  <Text style={styles.networkText}>
+    Network: {serverInfo.networkType}
+  </Text>
 
-              <Text style={styles.statusText}>
-                {paused
-                  ? '⏸ Paused'
-                  : '🟢 Ready for transfer'}
-              </Text>
+  <Text style={styles.networkText}>
+    Interface: {serverInfo.interfaceName}
+  </Text>
 
+  <Text style={styles.portText}>
+    Port: {serverInfo.port}
+  </Text>
+
+  <Text style={styles.urlLabel}>
+    Open this URL in any browser:
+  </Text>
+
+  <Text
+    style={styles.urlText}
+    selectable
+  >
+    {serverInfo.url}
+  </Text>
+
+  <Text style={styles.statusText}>
+    {paused
+      ? '⏸ Paused'
+      : '🟢 Ready for transfer'}
+  </Text>
               <View style={styles.actionsRow}>
 
                 {!paused ? (
@@ -530,7 +551,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+networkText: {
+  marginTop: 6,
+  fontSize: 14,
+  color: '#374151',
+},
 
+urlLabel: {
+  marginTop: 16,
+  fontSize: 14,
+  fontWeight: '700',
+},
+
+urlText: {
+  marginTop: 8,
+  padding: 12,
+  borderRadius: 10,
+  backgroundColor: '#fff',
+  fontSize: 14,
+  lineHeight: 21,
+},
   shareIcon: {
     width: 48,
     height: 48,

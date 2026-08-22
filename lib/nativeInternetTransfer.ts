@@ -11,7 +11,12 @@ export type InternetFile = {
 };
 
 export type InternetServerInfo = {
+  ip: string;
   port: number;
+  url: string;
+  networkType: string;
+  interfaceName: string;
+
   files: {
     id: string;
     name: string;
@@ -73,7 +78,7 @@ function checkAndroid() {
 
 export async function createInternetServer(
   files: InternetFile[]
-) {
+): Promise<InternetServerInfo> {
 
   checkAndroid();
 
@@ -82,21 +87,21 @@ export async function createInternetServer(
   );
 }
 
-export async function pauseInternetServer() {
+export async function pauseInternetServer(): Promise<boolean> {
 
   checkAndroid();
 
   return InternetTransfer.pauseServer();
 }
 
-export async function resumeInternetServer() {
+export async function resumeInternetServer(): Promise<boolean> {
 
   checkAndroid();
 
   return InternetTransfer.resumeServer();
 }
 
-export async function stopInternetServer() {
+export async function stopInternetServer(): Promise<boolean> {
 
   checkAndroid();
 
@@ -106,7 +111,7 @@ export async function stopInternetServer() {
 export async function connectInternetTransfer(
   host: string,
   port: number
-) {
+): Promise<boolean> {
 
   checkAndroid();
 
@@ -116,14 +121,14 @@ export async function connectInternetTransfer(
   );
 }
 
-export async function pauseInternetDownload() {
+export async function pauseInternetDownload(): Promise<boolean> {
 
   checkAndroid();
 
   return InternetTransfer.pauseDownload();
 }
 
-export async function resumeInternetDownload() {
+export async function resumeInternetDownload(): Promise<boolean> {
 
   checkAndroid();
 
@@ -134,7 +139,7 @@ export async function downloadInternetFile(
   fileId: string,
   destination: string,
   totalSize: number
-) {
+): Promise<boolean> {
 
   checkAndroid();
 
@@ -145,7 +150,7 @@ export async function downloadInternetFile(
   );
 }
 
-export async function closeInternetTransfer() {
+export async function closeInternetTransfer(): Promise<boolean> {
 
   checkAndroid();
 
