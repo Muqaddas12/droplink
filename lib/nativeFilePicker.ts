@@ -1,6 +1,6 @@
 import { NativeModules, Platform } from 'react-native';
 
-type NativeFile = {
+export type NativeFile = {
   uri: string;
   name: string;
   mimeType?: string | null;
@@ -14,10 +14,10 @@ type NativeFilePickerModule = {
 const NativeFilePicker =
   NativeModules.NativeFilePicker as NativeFilePickerModule;
 
-export async function pickFiles(): Promise<NativeFile[]> {
+function checkAndroid() {
   if (Platform.OS !== 'android') {
     throw new Error(
-      'Native DropLink file picker currently supports Android only.'
+      'DropLink native features currently support Android only.'
     );
   }
 
@@ -26,6 +26,10 @@ export async function pickFiles(): Promise<NativeFile[]> {
       'NativeFilePicker is not available. Rebuild the Android app.'
     );
   }
+}
+
+export async function pickFiles(): Promise<NativeFile[]> {
+  checkAndroid();
 
   return NativeFilePicker.pickFiles();
 }

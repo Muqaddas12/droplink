@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -8,39 +8,72 @@ import {
 } from 'react-native';
 
 import { pickFiles } from '@/lib/nativeFilePicker';
+import {
+  startLocalServer,
+  stopLocalServer,
+  ServerInfo,
+} from '@/lib/nativeDropLink';
 
 export default function TabOneScreen() {
 
-  const handlePickFiles = async () => {
+  const [serverInfo, setServerInfo] =
+    useState<ServerInfo | null>(null);
+
+  const handleShare = async () => {
     try {
 
       const files = await pickFiles();
 
-      console.log('SELECTED FILES:', files);
-
       if (files.length === 0) {
-        Alert.alert(
-          'No files selected',
-          'You did not select any files.'
-        );
-
         return;
       }
 
-      Alert.alert(
-        'Files selected',
+      console.log(
+        'SELECTED FILES:',
         files
-          .map(
-            (file) =>
-              `${file.name}\n${file.size ?? 0} bytes`
-          )
-          .join('\n\n')
+      );
+
+      const info =
+        await startLocalServer(files);
+
+      console.log(
+        'SERVER INFO:',
+        info
+      );
+
+      setServerInfo(info);
+
+      Alert.alert(
+        'Server Started',
+        info.url
       );
 
     } catch (error) {
 
       console.error(
-        'FILE PICKER ERROR:',
+        'SHARE ERROR:',
+        error
+      );
+
+      Alert.alert(
+        'Share Error',
+        String(error)
+      );
+    }
+  };
+
+  const handleStop = async () => {
+
+    try {
+
+      await stopLocalServer();
+
+      setServerInfo(null);
+
+    } catch (error) {
+
+      console.error(
+        'STOP SERVER ERROR:',
         error
       );
 
@@ -59,19 +92,44 @@ export default function TabOneScreen() {
       </Text>
 
       <Text style={styles.subtitle}>
-        Native Android File Picker
+        Zero-copy file sharing
       </Text>
 
       <Pressable
         style={styles.button}
-        onPress={handlePickFiles}
+        onPress={handleShare}
       >
-
         <Text style={styles.buttonText}>
-          Select Files
+          Select & Share
         </Text>
-
       </Pressable>
+
+      {serverInfo !== null && (
+        <View style={styles.serverContainer}>
+
+          <Text style={styles.serverTitle}>
+            Server Running
+          </Text>
+
+          <Text style={styles.url}>
+            {serverInfo.url}
+          </Text>
+
+          <Text style={styles.port}>
+            Port: {serverInfo.port}
+          </Text>
+
+          <Pressable
+            style={styles.stopButton}
+            onPress={handleStop}
+          >
+            <Text style={styles.stopText}>
+              Stop Server
+            </Text>
+          </Pressable>
+
+        </View>
+      )}
 
     </View>
   );
@@ -83,30 +141,69 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
+    padding: 24,
   },
 
   title: {
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: '800',
   },
 
   subtitle: {
     marginTop: 8,
-    color: '#777',
+    color: '#6b7280',
   },
 
   button: {
     marginTop: 30,
-    backgroundColor: '#2563EB',
     paddingHorizontal: 30,
-    paddingVertical: 16,
-    borderRadius: 14,
+    paddingVertical: 17,
+    borderRadius: 16,
+    backgroundColor: '#2563eb',
   },
 
   buttonText: {
     color: '#fff',
     fontSize: 17,
+    fontWeight: '700',
+  },
+
+  serverContainer: {
+    marginTop: 28,
+    width: '100%',
+    alignItems: 'center',
+    padding: 20,
+    borderRadius: 18,
+    backgroundColor: '#f3f4f6',
+  },
+
+  serverTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+
+  url: {
+    marginTop: 12,
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+
+  port: {
+    marginTop: 6,
+    color: '#6b7280',
+  },
+
+  stopButton: {
+    marginTop: 18,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#ef4444',
+  },
+
+  stopText: {
+    color: '#fff',
     fontWeight: '700',
   },
 

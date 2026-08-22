@@ -1,19 +1,35 @@
 import { NativeModules, Platform } from 'react-native';
 
+export type ShareFile = {
+  uri: string;
+  name: string;
+  mimeType?: string | null;
+  size?: number;
+};
+
+export type ServerInfo = {
+  ip: string;
+  port: number;
+  url: string;
+};
+
 type DropLinkNativeModule = {
-  startServer(directory: string): Promise<number>;
+  startServer(
+    files: ShareFile[]
+  ): Promise<ServerInfo>;
+
   stopServer(): Promise<boolean>;
+
+  getLocalIp(): Promise<string>;
 };
 
 const DropLink =
   NativeModules.DropLink as DropLinkNativeModule;
 
-export async function startLocalServer(
-  directory: string
-): Promise<number> {
+function checkAndroid() {
   if (Platform.OS !== 'android') {
     throw new Error(
-      'DropLink local server currently supports Android only.'
+      'DropLink currently supports Android only.'
     );
   }
 
@@ -22,14 +38,24 @@ export async function startLocalServer(
       'DropLink native module is not available. Rebuild the Android app.'
     );
   }
+}
 
-  return DropLink.startServer(directory);
+export async function startLocalServer(
+  files: ShareFile[]
+): Promise<ServerInfo> {
+  checkAndroid();
+
+  return DropLink.startServer(files);
 }
 
 export async function stopLocalServer(): Promise<boolean> {
-  if (!DropLink) {
-    return false;
-  }
+  checkAndroid();
 
   return DropLink.stopServer();
+}
+
+export async function getLocalIp(): Promise<string> {
+  checkAndroid();
+
+  return DropLink.getLocalIp();
 }
