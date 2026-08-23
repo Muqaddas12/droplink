@@ -1,14 +1,13 @@
 package com.muqaddas123.droplink
-
+import java.net.InetAddress
 import android.content.ContentResolver
 import android.net.Uri
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStream
-import java.io.OutputStream
 import java.io.InputStreamReader
+import java.io.OutputStream
 import java.io.OutputStreamWriter
-import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
@@ -27,6 +26,10 @@ class InternetTransferServer(
     private val contentResolver: ContentResolver
 ) {
 
+    companion object {
+        private const val TAG = "DropLinkInternet"
+    }
+
     private var serverSocket: ServerSocket? = null
 
     private val executor =
@@ -38,132 +41,209 @@ class InternetTransferServer(
     @Volatile
     private var paused = false
 
-    private var files =
-        emptyList<InternetSharedFile>()
+    @Volatile
+    private var files: List<InternetSharedFile> =
+        emptyList()
 
     var port: Int = 0
         private set
 
-    /*
-     * Address currently used by the server.
-     */
     var bindAddress: InetAddress? = null
         private set
 
     fun setFiles(
         sharedFiles: List<InternetSharedFile>
     ) {
-        files = sharedFiles
+        files = sharedFiles.toList()
+
+        android.util.Log.d(
+            TAG,
+            "FILES SET: ${files.size}"
+        )
     }
 
-    /*
-     * Start server on a specific network address.
+    /**
+     * Starts the server.
      *
-     * This is important for Internet Share because
-     * Android may have multiple active interfaces:
+     * IMPORTANT:
      *
-     * WiFi
-     * Hotspot
-     * rmnet_data1
-     * rmnet_data2
-     * etc.
+     * We do NOT bind the socket to the selected IPv6
+     * address.
+     *
+     * ServerSocket(0, 50) listens on all local interfaces.
+     *
+     * NetworkUtils is still used to determine which
+     * public IPv6 address should be displayed to the user.
      */
-    fun start(
-        address: InetAddress
-    ): Int {
+    @Synchronized
+    fun start(): Int {
 
-        if (running) {
+        if (running && serverSocket != null) {
             return port
         }
 
-        bindAddress = address
+        try {
 
-        /*
-         * Bind specifically to the selected address.
-         *
-         * port = 0 means Android chooses a free port.
-         */
-        serverSocket =
-            ServerSocket(
-                0,
-                50,
-                address
+            /*
+             * IMPORTANT:
+             *
+             * Do NOT use:
+             *
+             * ServerSocket(0, 50, address)
+             *
+             * Use wildcard binding instead.
+             */
+            serverSocket =
+                ServerSocket(
+                    0,
+                    50
+                )
+
+            port =
+                serverSocket!!.localPort
+
+            running = true
+            paused = false
+
+            val internetAddress =
+                NetworkUtils
+                    .getInternetNetworkAddress()
+
+            bindAddress =
+                internetAddress?.address
+
+            android.util.Log.d(
+                TAG,
+                "================================"
             )
 
-        port =
-            serverSocket!!.localPort
+            android.util.Log.d(
+                TAG,
+                "SERVER STARTED"
+            )
 
-        running = true
-        paused = false
+            android.util.Log.d(
+                TAG,
+                "PORT: $port"
+            )
 
-        android.util.Log.d(
-            "DropLinkInternet",
-            "SERVER STARTED"
-        )
-
-        android.util.Log.d(
-            "DropLinkInternet",
-            "BIND ADDRESS: ${address.hostAddress}"
-        )
-
-        android.util.Log.d(
-            "DropLinkInternet",
-            "PORT: $port"
-        )
-
-        executor.execute {
-
-            while (running) {
-
-                try {
-
-                    val socket =
-                        serverSocket!!.accept()
-
-                    android.util.Log.d(
-                        "DropLinkInternet",
-                        "CLIENT CONNECTED: " +
-                            socket.inetAddress.hostAddress
+            android.util.Log.d(
+                TAG,
+                "PUBLIC ADDRESS: " +
+                    (
+                        bindAddress
+                            ?.hostAddress
+                            ?: "NONE"
                     )
+            )
 
-                    executor.execute {
-                        handleClient(socket)
-                    }
+            if (bindAddress != null) {
 
-                } catch (e: Exception) {
+                android.util.Log.d(
+                    TAG,
+                    "SHARE URL: " +
+                        getServerUrl()
+                )
+            }
 
-                    if (running) {
+            android.util.Log.d(
+                TAG,
+                "================================"
+            )
 
-                        android.util.Log.e(
-                            "DropLinkInternet",
-                            "ACCEPT ERROR",
-                            e
+            executor.execute {
+
+                while (running) {
+
+                    try {
+
+                        val socket =
+                            serverSocket
+                                ?.accept()
+                                ?: break
+
+                        android.util.Log.d(
+                            TAG,
+                            "CLIENT CONNECTED: " +
+                                socket.inetAddress
+                                    .hostAddress
                         )
+
+                        executor.execute {
+                            handleClient(socket)
+                        }
+
+                    } catch (e: Exception) {
+
+                        if (running) {
+
+                            android.util.Log.e(
+                                TAG,
+                                "ACCEPT ERROR",
+                                e
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        return port
+            return port
+
+        } catch (e: Exception) {
+
+            android.util.Log.e(
+                TAG,
+                "SERVER START ERROR",
+                e
+            )
+
+            running = false
+            port = 0
+            bindAddress = null
+
+            try {
+                serverSocket?.close()
+            } catch (_: Exception) {
+            }
+
+            serverSocket = null
+
+            throw e
+        }
     }
 
-    /*
-     * Backward-compatible start().
+    /**
+     * Returns:
      *
-     * If old code still calls start(),
-     * use the first usable local address.
+     * IPv4:
+     * http://1.2.3.4:12345/
+     *
+     * IPv6:
+     * http://[2001:db8::1]:12345/
      */
-    fun start(): Int {
+    fun getServerUrl(): String? {
 
         val address =
             bindAddress
-                ?: NetworkUtils.getInternetNetworkAddress()
+                ?.hostAddress
+                ?: NetworkUtils
+                    .getInternetNetworkAddress()
                     ?.address
-                ?: throw IllegalStateException(
-                    "No usable Internet network address found."
-                )
+                    ?.hostAddress
+                ?: return null
 
-        return start(address)
+        if (port <= 0) {
+            return null
+        }
+
+        return if (address.contains(":")) {
+
+            "http://[$address]:$port/"
+
+        } else {
+
+            "http://$address:$port/"
+        }
     }
 
     fun pause() {
@@ -171,7 +251,7 @@ class InternetTransferServer(
         paused = true
 
         android.util.Log.d(
-            "DropLinkInternet",
+            TAG,
             "SERVER PAUSED"
         )
     }
@@ -181,11 +261,12 @@ class InternetTransferServer(
         paused = false
 
         android.util.Log.d(
-            "DropLinkInternet",
+            TAG,
             "SERVER RESUMED"
         )
     }
 
+    @Synchronized
     fun stop() {
 
         running = false
@@ -201,7 +282,7 @@ class InternetTransferServer(
         bindAddress = null
 
         android.util.Log.d(
-            "DropLinkInternet",
+            TAG,
             "SERVER STOPPED"
         )
     }
@@ -214,10 +295,13 @@ class InternetTransferServer(
 
             try {
 
+                it.soTimeout = 30_000
+
                 val reader =
                     BufferedReader(
                         InputStreamReader(
-                            socket.getInputStream()
+                            it.getInputStream(),
+                            Charsets.ISO_8859_1
                         )
                     )
 
@@ -225,19 +309,19 @@ class InternetTransferServer(
                     it.getOutputStream()
 
                 /*
-                 * Read HTTP request line.
+                 * HTTP request line.
                  */
                 val requestLine =
                     reader.readLine()
                         ?: return
 
                 android.util.Log.d(
-                    "DropLinkInternet",
+                    TAG,
                     "REQUEST: $requestLine"
                 )
 
                 /*
-                 * Read headers.
+                 * HTTP headers.
                  */
                 val headers =
                     mutableMapOf<String, String>()
@@ -271,13 +355,15 @@ class InternetTransferServer(
                             )
                                 .trim()
 
-                        headers[key] =
-                            value
+                        headers[key] = value
                     }
                 }
 
                 val parts =
-                    requestLine.split(" ")
+                    requestLine.split(
+                        " ",
+                        limit = 3
+                    )
 
                 if (parts.size < 2) {
 
@@ -325,6 +411,13 @@ class InternetTransferServer(
                         )
                     }
 
+                    path == "/api/files" -> {
+
+                        sendFileList(
+                            output
+                        )
+                    }
+
                     path.startsWith(
                         "/download/"
                     ) -> {
@@ -339,15 +432,6 @@ class InternetTransferServer(
                             method,
                             fileId,
                             headers["range"]
-                        )
-                    }
-
-                    path.startsWith(
-                        "/api/files"
-                    ) -> {
-
-                        sendFileList(
-                            output
                         )
                     }
 
@@ -366,7 +450,7 @@ class InternetTransferServer(
                 if (running) {
 
                     android.util.Log.e(
-                        "DropLinkInternet",
+                        TAG,
                         "CLIENT ERROR",
                         e
                     )
@@ -428,183 +512,170 @@ class InternetTransferServer(
     private fun buildHomePage(): String {
 
         val fileHtml =
-            files.joinToString("\n") { file ->
-
-                val safeName =
-                    escapeHtml(
-                        file.name
-                    )
-
-                val size =
-                    formatSize(
-                        file.size
-                    )
+            if (files.isEmpty()) {
 
                 """
-                <div class="file">
-                    <div class="fileInfo">
-                        <div class="name">
-                            $safeName
-                        </div>
-
-                        <div class="size">
-                            $size
-                        </div>
-                    </div>
-
-                    <a
-                        class="download"
-                        href="/download/${file.id}"
-                    >
-                        Download
-                    </a>
+                <div class="empty">
+                    No files are currently shared.
                 </div>
                 """.trimIndent()
+
+            } else {
+
+                files.joinToString("\n") { file ->
+
+                    val safeName =
+                        escapeHtml(
+                            file.name
+                        )
+
+                    val size =
+                        formatSize(
+                            file.size
+                        )
+
+                    """
+                    <div class="file">
+                        <div class="fileInfo">
+                            <div class="name">
+                                $safeName
+                            </div>
+
+                            <div class="size">
+                                $size
+                            </div>
+                        </div>
+
+                        <a
+                            class="download"
+                            href="/download/${file.id}"
+                        >
+                            Download
+                        </a>
+                    </div>
+                    """.trimIndent()
+                }
             }
 
         return """
-<!DOCTYPE html>
-<html>
+        <!DOCTYPE html>
+        <html>
 
-<head>
+        <head>
 
-<meta
-    name="viewport"
-    content="width=device-width,initial-scale=1"
-/>
+        <meta
+            name="viewport"
+            content="width=device-width,initial-scale=1"
+        />
 
-<title>DropLink</title>
+        <title>DropLink</title>
 
-<style>
+        <style>
 
-* {
-    box-sizing: border-box;
-}
+        * {
+            box-sizing: border-box;
+        }
 
-body {
-    margin: 0;
-    padding: 24px;
+        body {
+            margin: 0;
+            padding: 24px;
+            font-family: Arial, sans-serif;
+            background: #f5f7fb;
+            color: #111827;
+        }
 
-    font-family:
-        Arial,
-        sans-serif;
+        .container {
+            max-width: 700px;
+            margin: auto;
+        }
 
-    background: #f5f7fb;
-    color: #111827;
-}
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow:
+                0 8px 30px
+                rgba(0,0,0,0.08);
+        }
 
-.container {
-    max-width: 700px;
-    margin: auto;
-}
+        h1 {
+            margin-top: 0;
+            margin-bottom: 6px;
+        }
 
-.card {
-    background: white;
+        .subtitle {
+            color: #6b7280;
+            margin-top: 0;
+        }
 
-    border-radius: 20px;
+        .file {
+            margin-top: 14px;
+            padding: 16px;
+            border-radius: 14px;
+            background: #f3f4f6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
 
-    padding: 24px;
+        .fileInfo {
+            min-width: 0;
+            flex: 1;
+        }
 
-    box-shadow:
-        0 8px 30px
-        rgba(0,0,0,0.08);
-}
+        .name {
+            font-weight: 700;
+            word-break: break-word;
+        }
 
-h1 {
-    margin-top: 0;
-    margin-bottom: 6px;
-}
+        .size {
+            margin-top: 5px;
+            color: #6b7280;
+            font-size: 13px;
+        }
 
-.subtitle {
-    color: #6b7280;
-    margin-top: 0;
-}
+        .download {
+            text-decoration: none;
+            color: white;
+            background: #2563eb;
+            padding: 11px 16px;
+            border-radius: 10px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
 
-.file {
-    margin-top: 14px;
+        .empty {
+            padding: 20px;
+            text-align: center;
+            color: #6b7280;
+        }
 
-    padding: 16px;
+        </style>
 
-    border-radius: 14px;
+        </head>
 
-    background: #f3f4f6;
+        <body>
 
-    display: flex;
+        <div class="container">
 
-    justify-content:
-        space-between;
+        <div class="card">
 
-    align-items: center;
+        <h1>DropLink</h1>
 
-    gap: 12px;
-}
+        <p class="subtitle">
+            Files shared from this device
+        </p>
 
-.fileInfo {
-    min-width: 0;
-    flex: 1;
-}
+        $fileHtml
 
-.name {
-    font-weight: 700;
+        </div>
 
-    word-break:
-        break-word;
-}
+        </div>
 
-.size {
-    margin-top: 5px;
+        </body>
 
-    color: #6b7280;
-
-    font-size: 13px;
-}
-
-.download {
-    text-decoration: none;
-
-    color: white;
-
-    background: #2563eb;
-
-    padding:
-        11px 16px;
-
-    border-radius: 10px;
-
-    font-weight: 700;
-
-    white-space: nowrap;
-}
-
-.download:hover {
-    background: #1d4ed8;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="container">
-
-<div class="card">
-
-<h1>DropLink</h1>
-
-<p class="subtitle">
-Files shared from this device
-</p>
-
-$fileHtml
-
-</div>
-
-</div>
-
-</body>
-
-</html>
+        </html>
         """.trimIndent()
     }
 
@@ -627,9 +698,7 @@ $fileHtml
 
                     append("{")
 
-                    append(
-                        "\"id\":\""
-                    )
+                    append("\"id\":\"")
 
                     append(
                         escapeJson(
@@ -639,9 +708,7 @@ $fileHtml
 
                     append("\",")
 
-                    append(
-                        "\"name\":\""
-                    )
+                    append("\"name\":\"")
 
                     append(
                         escapeJson(
@@ -651,9 +718,7 @@ $fileHtml
 
                     append("\",")
 
-                    append(
-                        "\"mimeType\":\""
-                    )
+                    append("\"mimeType\":\"")
 
                     append(
                         escapeJson(
@@ -664,9 +729,7 @@ $fileHtml
 
                     append("\",")
 
-                    append(
-                        "\"size\":"
-                    )
+                    append("\"size\":")
 
                     append(
                         file.size
@@ -696,7 +759,7 @@ $fileHtml
         )
 
         writer.write(
-            "Content-Type: application/json\r\n"
+            "Content-Type: application/json; charset=utf-8\r\n"
         )
 
         writer.write(
@@ -758,11 +821,77 @@ $fileHtml
         val totalSize =
             file.size
 
+        /*
+         * Empty file.
+         */
+        if (totalSize == 0L) {
+
+            val writer =
+                BufferedWriter(
+                    OutputStreamWriter(
+                        output,
+                        Charsets.UTF_8
+                    )
+                )
+
+            writer.write(
+                "HTTP/1.1 200 OK\r\n"
+            )
+
+            writer.write(
+                "Content-Type: ${
+                    file.mimeType
+                        ?: "application/octet-stream"
+                }\r\n"
+            )
+
+            writer.write(
+                "Content-Length: 0\r\n"
+            )
+
+            writer.write(
+                "Accept-Ranges: bytes\r\n"
+            )
+
+            writer.write(
+                "Content-Disposition: attachment; " +
+                    "filename=\"${escapeHeader(file.name)}\"\r\n"
+            )
+
+            writer.write(
+                "Connection: close\r\n"
+            )
+
+            writer.write(
+                "\r\n"
+            )
+
+            writer.flush()
+
+            return
+        }
+
         val range =
             parseRange(
                 rangeHeader,
                 totalSize
             )
+
+        /*
+         * Invalid Range.
+         */
+        if (
+            rangeHeader != null &&
+            range == null
+        ) {
+
+            sendRangeError(
+                output,
+                totalSize
+            )
+
+            return
+        }
 
         val start =
             range?.first ?: 0L
@@ -772,11 +901,7 @@ $fileHtml
                 ?: (totalSize - 1)
 
         val contentLength =
-            if (totalSize == 0L) {
-                0L
-            } else {
-                end - start + 1
-            }
+            end - start + 1
 
         val partial =
             range != null
@@ -818,8 +943,8 @@ $fileHtml
         if (partial) {
 
             writer.write(
-                "Content-Range: bytes " +
-                    "$start-$end/$totalSize\r\n"
+                "Content-Range: " +
+                    "bytes $start-$end/$totalSize\r\n"
             )
         }
 
@@ -846,10 +971,6 @@ $fileHtml
             return
         }
 
-        if (contentLength <= 0L) {
-            return
-        }
-
         streamFileRange(
             output,
             file,
@@ -859,90 +980,60 @@ $fileHtml
     }
 
     private fun streamFileRange(
-        output: OutputStream,
-        file: InternetSharedFile,
-        start: Long,
-        length: Long
-    ) {
+    output: OutputStream,
+    file: InternetSharedFile,
+    start: Long,
+    length: Long
+) {
+    val input =
+        contentResolver.openInputStream(file.uri)
+            ?: return
 
-        val input =
-            contentResolver.openInputStream(
-                file.uri
-            )
+    input.use {
 
-        if (input == null) {
-            return
-        }
+        skipFully(it, start)
 
-        input.use {
+        val buffer = ByteArray(1024 * 1024)
 
-            skipFully(
-                it,
-                start
-            )
+        var remaining = length
 
-            val buffer =
-                ByteArray(
-                    64 * 1024
-                )
+        while (remaining > 0 && running) {
 
-            var remaining =
-                length
+            while (paused && running) {
+                Thread.sleep(100)
+            }
 
-            while (
-                remaining > 0 &&
-                running
-            ) {
+            if (!running) break
 
-                /*
-                 * Pause support.
-                 */
-                while (
-                    paused &&
-                    running
-                ) {
+            val wanted =
+                minOf(
+                    buffer.size.toLong(),
+                    remaining
+                ).toInt()
 
-                    Thread.sleep(
-                        100
-                    )
-                }
-
-                if (!running) {
-                    break
-                }
-
-                val wanted =
-                    minOf(
-                        buffer.size.toLong(),
-                        remaining
-                    ).toInt()
-
-                val read =
-                    it.read(
-                        buffer,
-                        0,
-                        wanted
-                    )
-
-                if (read == -1) {
-                    break
-                }
-
-                output.write(
+            val read =
+                it.read(
                     buffer,
                     0,
-                    read
+                    wanted
                 )
 
-                output.flush()
-
-                remaining -=
-                    read
+            if (read <= 0) {
+                break
             }
-        }
-    }
 
-    private fun skipFully(
+            output.write(
+                buffer,
+                0,
+                read
+            )
+
+            remaining -= read
+        }
+
+        output.flush()
+    }
+}    private fun skipFully(
         input: InputStream,
         amount: Long
     ) {
@@ -959,9 +1050,7 @@ $fileHtml
 
             if (skipped <= 0) {
 
-                if (
-                    input.read() == -1
-                ) {
+                if (input.read() == -1) {
                     break
                 }
 
@@ -969,12 +1058,18 @@ $fileHtml
 
             } else {
 
-                remaining -=
-                    skipped
+                remaining -= skipped
             }
         }
     }
 
+    /**
+     * Supports:
+     *
+     * bytes=0-999
+     * bytes=1000-
+     * bytes=-1000
+     */
     private fun parseRange(
         value: String?,
         totalSize: Long
@@ -982,9 +1077,7 @@ $fileHtml
 
         if (
             value == null ||
-            !value.startsWith(
-                "bytes="
-            ) ||
+            !value.startsWith("bytes=") ||
             totalSize <= 0
         ) {
             return null
@@ -992,58 +1085,153 @@ $fileHtml
 
         return try {
 
-            val range =
+            val rangeValue =
                 value
-                    .removePrefix(
-                        "bytes="
+                    .removePrefix("bytes=")
+                    .split(",")
+                    .first()
+                    .trim()
+
+            val dash =
+                rangeValue.indexOf('-')
+
+            if (dash < 0) {
+                return null
+            }
+
+            val startText =
+                rangeValue
+                    .substring(
+                        0,
+                        dash
                     )
-                    .split("-")
+                    .trim()
+
+            val endText =
+                rangeValue
+                    .substring(
+                        dash + 1
+                    )
+                    .trim()
+
+            /*
+             * bytes=-1000
+             */
+            if (startText.isEmpty()) {
+
+                val suffixLength =
+                    endText.toLong()
+
+                if (suffixLength <= 0) {
+                    return null
+                }
+
+                val start =
+                    maxOf(
+                        0L,
+                        totalSize - suffixLength
+                    )
+
+                return Pair(
+                    start,
+                    totalSize - 1
+                )
+            }
 
             val start =
-                range[0]
-                    .trim()
-                    .toLong()
-
-            val end =
-                if (
-                    range.size > 1 &&
-                    range[1]
-                        .trim()
-                        .isNotEmpty()
-                ) {
-
-                    range[1]
-                        .trim()
-                        .toLong()
-
-                } else {
-
-                    totalSize - 1
-                }
+                startText.toLong()
 
             if (
                 start < 0 ||
-                start >= totalSize ||
-                end < start
+                start >= totalSize
             ) {
-
-                null
-
-            } else {
-
-                Pair(
-                    start,
-                    minOf(
-                        end,
-                        totalSize - 1
-                    )
-                )
+                return null
             }
+
+            val end =
+                if (endText.isEmpty()) {
+
+                    totalSize - 1
+
+                } else {
+
+                    endText.toLong()
+                }
+
+            if (end < start) {
+                return null
+            }
+
+            Pair(
+                start,
+                minOf(
+                    end,
+                    totalSize - 1
+                )
+            )
 
         } catch (_: Exception) {
 
             null
         }
+    }
+
+    private fun sendRangeError(
+        output: OutputStream,
+        totalSize: Long
+    ) {
+
+        val body =
+            """
+            <html>
+            <body>
+            <h2>416</h2>
+            <p>Requested Range Not Satisfiable</p>
+            </body>
+            </html>
+            """.trimIndent()
+
+        val bytes =
+            body.toByteArray(
+                Charsets.UTF_8
+            )
+
+        val writer =
+            BufferedWriter(
+                OutputStreamWriter(
+                    output,
+                    Charsets.UTF_8
+                )
+            )
+
+        writer.write(
+            "HTTP/1.1 416 Range Not Satisfiable\r\n"
+        )
+
+        writer.write(
+            "Content-Range: bytes */$totalSize\r\n"
+        )
+
+        writer.write(
+            "Content-Type: text/html; charset=utf-8\r\n"
+        )
+
+        writer.write(
+            "Content-Length: ${bytes.size}\r\n"
+        )
+
+        writer.write(
+            "Connection: close\r\n"
+        )
+
+        writer.write(
+            "\r\n"
+        )
+
+        writer.flush()
+
+        output.write(bytes)
+        output.flush()
     }
 
     private fun sendError(
@@ -1216,7 +1404,10 @@ $fileHtml
 
             return "%.1f MB".format(
                 bytes /
-                    (1024.0 * 1024.0)
+                    (
+                        1024.0 *
+                        1024.0
+                    )
             )
         }
 

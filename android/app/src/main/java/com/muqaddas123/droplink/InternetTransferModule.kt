@@ -289,9 +289,7 @@ class InternetTransferModule(
              */
 
             val port =
-                transferServer.start(
-                    network.address
-                )
+                transferServer.start()
 
 
             /*
