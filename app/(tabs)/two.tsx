@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import {
   Alert,
   Pressable,
+  ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -18,27 +20,20 @@ import {
 } from '@/lib/nativeInternetTransfer';
 
 export default function TabTwoScreen() {
-
-  const [selectedFiles, setSelectedFiles] =
-    useState<
-      Awaited<ReturnType<typeof pickFiles>>
-    >([]);
+  const [selectedFiles, setSelectedFiles] = useState<
+    Awaited<ReturnType<typeof pickFiles>>
+  >([]);
 
   const [serverInfo, setServerInfo] =
     useState<InternetServerInfo | null>(null);
 
-  const [starting, setStarting] =
-    useState(false);
+  const [paused, setPaused] = useState(false);
 
-  const [paused, setPaused] =
-    useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleInternetShare = async () => {
-
+  const handleSelectFiles = async () => {
     try {
-
-      const files =
-        await pickFiles();
+      const files = await pickFiles();
 
       if (files.length === 0) {
         return;
@@ -50,52 +45,33 @@ export default function TabTwoScreen() {
       );
 
       setSelectedFiles(files);
-
-      /*
-       * If an old server exists,
-       * stop it before creating a new one.
-       */
-      if (serverInfo !== null) {
-
-        try {
-          await stopInternetServer();
-        } catch (_) {
-          // Ignore old server cleanup error.
-        }
-
-        setServerInfo(null);
-        setPaused(false);
-      }
+      setServerInfo(null);
+      setPaused(false);
 
     } catch (error) {
-
       console.error(
-        'INTERNET SHARE ERROR:',
+        'FILE PICKER ERROR:',
         error
       );
 
       Alert.alert(
-        'Internet Share Error',
+        'Error',
         String(error)
       );
     }
   };
 
   const handleCreateServer = async () => {
-
     if (selectedFiles.length === 0) {
-
       Alert.alert(
         'No Files',
         'Please select at least one file.'
       );
-
       return;
     }
 
     try {
-
-      setStarting(true);
+      setLoading(true);
 
       console.log(
         'STARTING INTERNET SERVER...'
@@ -114,18 +90,9 @@ export default function TabTwoScreen() {
       setServerInfo(info);
       setPaused(false);
 
-     Alert.alert(
-  'Internet Server Started',
-  `Network: ${info.networkType}\n\n` +
-  `IP: ${info.ip}\n\n` +
-  `Port: ${info.port}\n\n` +
-  `URL:\n${info.url}\n\n` +
-  `${info.files.length} file(s) ready.`
-);
     } catch (error) {
-
       console.error(
-        'CREATE INTERNET SERVER ERROR:',
+        'CREATE SERVER ERROR:',
         error
       );
 
@@ -135,86 +102,65 @@ export default function TabTwoScreen() {
       );
 
     } finally {
-
-      setStarting(false);
+      setLoading(false);
     }
   };
 
-  const handlePause = async () => {
-
+  const handlePauseResume = async () => {
     try {
-
-      await pauseInternetServer();
-
-      setPaused(true);
-
-      console.log(
-        'INTERNET SERVER PAUSED'
-      );
-
+      if (paused) {
+        await resumeInternetServer();
+        setPaused(false);
+      } else {
+        await pauseInternetServer();
+        setPaused(true);
+      }
     } catch (error) {
-
       console.error(
-        'PAUSE ERROR:',
+        'PAUSE/RESUME ERROR:',
         error
       );
 
       Alert.alert(
-        'Pause Error',
+        'Error',
         String(error)
       );
     }
   };
 
-  const handleResume = async () => {
-
+  const handleStopServer = async () => {
     try {
-
-      await resumeInternetServer();
-
-      setPaused(false);
-
-      console.log(
-        'INTERNET SERVER RESUMED'
-      );
-
-    } catch (error) {
-
-      console.error(
-        'RESUME ERROR:',
-        error
-      );
-
-      Alert.alert(
-        'Resume Error',
-        String(error)
-      );
-    }
-  };
-
-  const handleStop = async () => {
-
-    try {
-
       await stopInternetServer();
 
       setServerInfo(null);
       setPaused(false);
 
-      console.log(
-        'INTERNET SERVER STOPPED'
-      );
-
     } catch (error) {
-
       console.error(
         'STOP SERVER ERROR:',
         error
       );
 
       Alert.alert(
-        'Stop Error',
+        'Error',
         String(error)
+      );
+    }
+  };
+
+  const handleShareUrl = async () => {
+    if (!serverInfo?.url) {
+      return;
+    }
+
+    try {
+      await Share.share({
+        message: serverInfo.url,
+      });
+    } catch (error) {
+      console.error(
+        'SHARE URL ERROR:',
+        error
       );
     }
   };
@@ -229,12 +175,14 @@ export default function TabTwoScreen() {
   const formatSize = (
     bytes: number
   ) => {
-
     if (bytes < 1024) {
       return `${bytes} B`;
     }
 
-    if (bytes < 1024 * 1024) {
+    if (
+      bytes <
+      1024 * 1024
+    ) {
       return `${(
         bytes / 1024
       ).toFixed(1)} KB`;
@@ -242,7 +190,9 @@ export default function TabTwoScreen() {
 
     if (
       bytes <
-      1024 * 1024 * 1024
+      1024 *
+        1024 *
+        1024
     ) {
       return `${(
         bytes /
@@ -252,84 +202,332 @@ export default function TabTwoScreen() {
 
     return `${(
       bytes /
-      (1024 * 1024 * 1024)
+      (1024 *
+        1024 *
+        1024)
     ).toFixed(2)} GB`;
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={
+        styles.container
+      }
+      showsVerticalScrollIndicator={false}
+    >
+
+      {/* Header */}
 
       <View style={styles.header}>
+        <View>
+          <Text style={styles.title}>
+            Internet Share
+          </Text>
 
-        <Text style={styles.title}>
-          Internet Share
-        </Text>
+          <Text style={styles.subtitle}>
+            Share files directly over the Internet
+          </Text>
+        </View>
 
-        <Text style={styles.subtitle}>
-          Share files anywhere over the Internet
-        </Text>
-
+        <View style={styles.globe}>
+          <Text style={styles.globeText}>
+            🌐
+          </Text>
+        </View>
       </View>
 
-      <View style={styles.hero}>
 
-        <Text style={styles.heroIcon}>
-          🌐
-        </Text>
+      {/* Status Card */}
 
-        <Text style={styles.heroTitle}>
-          Share Anywhere
-        </Text>
+      {serverInfo ? (
+        <View style={styles.statusCard}>
 
-        <Text style={styles.heroText}>
-          Select files and create a direct
-          transfer session.
-        </Text>
+          <View style={styles.statusHeader}>
 
-      </View>
+            <View style={styles.statusLeft}>
+
+              <View
+                style={[
+                  styles.statusDot,
+                  paused &&
+                    styles.statusDotPaused,
+                ]}
+              />
+
+              <View>
+                <Text
+                  style={styles.statusTitle}
+                >
+                  {paused
+                    ? 'Server Paused'
+                    : 'Server Running'}
+                </Text>
+
+                <Text
+                  style={styles.statusSubtitle}
+                >
+                  {paused
+                    ? 'Transfers are paused'
+                    : 'Ready for download'}
+                </Text>
+              </View>
+
+            </View>
+
+            <View style={styles.liveBadge}>
+              <Text style={styles.liveText}>
+                {paused
+                  ? 'PAUSED'
+                  : 'LIVE'}
+              </Text>
+            </View>
+
+          </View>
+
+
+          {/* Network */}
+
+          <View style={styles.infoGrid}>
+
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>
+                NETWORK
+              </Text>
+
+              <Text style={styles.infoValue}>
+                {serverInfo.networkType}
+              </Text>
+            </View>
+
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>
+                PORT
+              </Text>
+
+              <Text style={styles.infoValue}>
+                {serverInfo.port}
+              </Text>
+            </View>
+
+          </View>
+
+
+          {/* URL */}
+
+          <Text style={styles.urlLabel}>
+            SHARE URL
+          </Text>
+
+          <View style={styles.urlBox}>
+
+            <Text
+              style={styles.urlText}
+              selectable
+            >
+              {serverInfo.url}
+            </Text>
+
+          </View>
+
+
+          {/* URL Buttons */}
+
+          <View style={styles.urlActions}>
+
+            <Pressable
+              style={[
+                styles.urlButton,
+                styles.shareUrlButton,
+              ]}
+              onPress={handleShareUrl}
+            >
+              <Text
+                style={
+                  styles.shareUrlButtonText
+                }
+              >
+                ↗  Share URL
+              </Text>
+            </Pressable>
+
+          </View>
+
+
+          {/* Server Controls */}
+
+          <View style={styles.controls}>
+
+            <Pressable
+              style={[
+                styles.controlButton,
+                styles.pauseButton,
+              ]}
+              onPress={
+                handlePauseResume
+              }
+            >
+              <Text
+                style={
+                  styles.pauseButtonText
+                }
+              >
+                {paused
+                  ? '▶  Resume'
+                  : 'Ⅱ  Pause'}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={[
+                styles.controlButton,
+                styles.stopButton,
+              ]}
+              onPress={
+                handleStopServer
+              }
+            >
+              <Text
+                style={
+                  styles.stopButtonText
+                }
+              >
+                ■  Stop
+              </Text>
+            </Pressable>
+
+          </View>
+
+        </View>
+      ) : (
+
+        /* Empty Server Card */
+
+        <View style={styles.heroCard}>
+
+          <View style={styles.heroIcon}>
+            <Text style={styles.heroIconText}>
+              ↗
+            </Text>
+          </View>
+
+          <Text style={styles.heroTitle}>
+            Direct File Sharing
+          </Text>
+
+          <Text style={styles.heroText}>
+            Your phone becomes the file
+            server. Other devices can
+            download directly from your
+            phone using a browser.
+          </Text>
+
+          <View style={styles.featureRow}>
+
+            <View style={styles.feature}>
+              <Text style={styles.featureIcon}>
+                ⚡
+              </Text>
+
+              <Text style={styles.featureText}>
+                Direct
+              </Text>
+            </View>
+
+            <View style={styles.feature}>
+              <Text style={styles.featureIcon}>
+                🔒
+              </Text>
+
+              <Text style={styles.featureText}>
+                Private
+              </Text>
+            </View>
+
+            <View style={styles.feature}>
+              <Text style={styles.featureIcon}>
+                📱
+              </Text>
+
+              <Text style={styles.featureText}>
+                Any Browser
+              </Text>
+            </View>
+
+          </View>
+
+        </View>
+      )}
+
+
+      {/* Select Files */}
 
       <Pressable
-        style={styles.shareButton}
-        onPress={handleInternetShare}
-        disabled={starting}
+        style={[
+          styles.selectButton,
+          loading &&
+            styles.disabledButton,
+        ]}
+        onPress={
+          handleSelectFiles
+        }
+        disabled={loading}
       >
 
-        <Text style={styles.shareIcon}>
-          ↑
-        </Text>
+        <View style={styles.selectIcon}>
+          <Text style={styles.selectIconText}>
+            +
+          </Text>
+        </View>
 
-        <View>
+        <View style={styles.selectContent}>
 
-          <Text style={styles.shareTitle}>
+          <Text style={styles.selectTitle}>
             Select Files
           </Text>
 
-          <Text style={styles.shareSubtitle}>
-            Choose files to share
+          <Text style={styles.selectSubtitle}>
+            Choose photos, videos or documents
           </Text>
 
         </View>
 
+        <Text style={styles.arrow}>
+          ›
+        </Text>
+
       </Pressable>
+
+
+      {/* Selected Files */}
 
       {selectedFiles.length > 0 && (
 
-        <View style={styles.filesContainer}>
+        <View style={styles.filesCard}>
 
           <View style={styles.filesHeader}>
 
-            <Text style={styles.filesTitle}>
-              Selected Files
-            </Text>
+            <View>
+              <Text style={styles.filesTitle}>
+                Selected Files
+              </Text>
 
-            <Text style={styles.filesCount}>
-              {selectedFiles.length} file
-              {selectedFiles.length !== 1
-                ? 's'
-                : ''}
-            </Text>
+              <Text style={styles.filesSubtitle}>
+                {selectedFiles.length}{' '}
+                {selectedFiles.length === 1
+                  ? 'file'
+                  : 'files'}
+              </Text>
+            </View>
+
+            <View style={styles.sizeBadge}>
+              <Text style={styles.sizeBadgeText}>
+                {formatSize(totalSize)}
+              </Text>
+            </View>
 
           </View>
+
 
           {selectedFiles.map(
             (file, index) => (
@@ -340,11 +538,17 @@ export default function TabTwoScreen() {
               >
 
                 <View style={styles.fileIcon}>
-
-                  <Text>
-                    📄
+                  <Text style={styles.fileIconText}>
+                    {file.mimeType?.startsWith(
+                      'image/'
+                    )
+                      ? '🖼️'
+                      : file.mimeType?.startsWith(
+                          'video/'
+                        )
+                      ? '🎬'
+                      : '📄'}
                   </Text>
-
                 </View>
 
                 <View style={styles.fileInfo}>
@@ -365,272 +569,290 @@ export default function TabTwoScreen() {
                 </View>
 
               </View>
-
             )
           )}
 
-          <View style={styles.totalRow}>
 
-            <Text style={styles.totalText}>
-              Total
-            </Text>
-
-            <Text style={styles.totalSize}>
-              {formatSize(totalSize)}
-            </Text>
-
-          </View>
-
-          {serverInfo === null ? (
+          {!serverInfo && (
 
             <Pressable
-              style={styles.createButton}
-              onPress={handleCreateServer}
-              disabled={starting}
+              style={[
+                styles.createButton,
+                loading &&
+                  styles.disabledButton,
+              ]}
+              onPress={
+                handleCreateServer
+              }
+              disabled={loading}
             >
 
               <Text
-                style={styles.createButtonText}
+                style={
+                  styles.createButtonText
+                }
               >
-                {starting
+                {loading
                   ? 'Starting Server...'
                   : 'Create Internet Link'}
               </Text>
 
-            </Pressable>
-
-          ) : (
-
-            <View style={styles.serverBox}>
-
-  <Text style={styles.serverTitle}>
-    Internet Server Running
-  </Text>
-
-  <Text style={styles.networkText}>
-    Network: {serverInfo.networkType}
-  </Text>
-
-  <Text style={styles.networkText}>
-    Interface: {serverInfo.interfaceName}
-  </Text>
-
-  <Text style={styles.portText}>
-    Port: {serverInfo.port}
-  </Text>
-
-  <Text style={styles.urlLabel}>
-    Open this URL in any browser:
-  </Text>
-
-  <Text
-    style={styles.urlText}
-    selectable
-  >
-    {serverInfo.url}
-  </Text>
-
-  <Text style={styles.statusText}>
-    {paused
-      ? '⏸ Paused'
-      : '🟢 Ready for transfer'}
-  </Text>
-              <View style={styles.actionsRow}>
-
-                {!paused ? (
-
-                  <Pressable
-                    style={styles.pauseButton}
-                    onPress={handlePause}
-                  >
-
-                    <Text
-                      style={styles.actionText}
-                    >
-                      Pause
-                    </Text>
-
-                  </Pressable>
-
-                ) : (
-
-                  <Pressable
-                    style={styles.resumeButton}
-                    onPress={handleResume}
-                  >
-
-                    <Text
-                      style={styles.actionText}
-                    >
-                      Resume
-                    </Text>
-
-                  </Pressable>
-
-                )}
-
-                <Pressable
-                  style={styles.stopButton}
-                  onPress={handleStop}
+              {!loading && (
+                <Text
+                  style={
+                    styles.createArrow
+                  }
                 >
+                  →
+                </Text>
+              )}
 
-                  <Text
-                    style={styles.actionText}
-                  >
-                    Stop
-                  </Text>
-
-                </Pressable>
-
-              </View>
-
-            </View>
+            </Pressable>
 
           )}
 
         </View>
-
       )}
 
-    </View>
+
+      {/* Bottom information */}
+
+      <View style={styles.securityNote}>
+
+        <Text style={styles.securityIcon}>
+          ℹ
+        </Text>
+
+        <Text style={styles.securityText}>
+          Keep this screen open while
+          someone is downloading your files.
+        </Text>
+
+      </View>
+
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
 
-  container: {
+  screen: {
     flex: 1,
-    padding: 24,
+    backgroundColor: '#f8fafc',
+  },
+
+  container: {
+    padding: 20,
+    paddingBottom: 40,
   },
 
   header: {
-    marginTop: 30,
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
 
   title: {
-    fontSize: 32,
+    fontSize: 29,
     fontWeight: '800',
+    color: '#111827',
   },
 
   subtitle: {
-    marginTop: 8,
-    fontSize: 15,
+    marginTop: 5,
+    fontSize: 14,
     color: '#6b7280',
   },
 
-  hero: {
-    marginTop: 35,
-    padding: 28,
+  globe: {
+    width: 50,
+    height: 50,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e0e7ff',
+  },
+
+  globeText: {
+    fontSize: 25,
+  },
+
+
+  /* Hero */
+
+  heroCard: {
+    marginTop: 25,
+    padding: 24,
     borderRadius: 24,
     backgroundColor: '#eef2ff',
     alignItems: 'center',
   },
 
   heroIcon: {
-    fontSize: 42,
+    width: 70,
+    height: 70,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#4f46e5',
+  },
+
+  heroIconText: {
+    color: '#fff',
+    fontSize: 38,
+    fontWeight: '700',
   },
 
   heroTitle: {
-    marginTop: 12,
-    fontSize: 22,
+    marginTop: 16,
+    fontSize: 21,
     fontWeight: '800',
+    color: '#111827',
   },
 
   heroText: {
-    marginTop: 8,
+    marginTop: 9,
     textAlign: 'center',
     lineHeight: 21,
     color: '#6b7280',
+    fontSize: 14,
   },
 
-  shareButton: {
+  featureRow: {
+    width: '100%',
     marginTop: 22,
-    padding: 18,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+
+  feature: {
+    alignItems: 'center',
+  },
+
+  featureIcon: {
+    fontSize: 19,
+  },
+
+  featureText: {
+    marginTop: 5,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4b5563',
+  },
+
+
+  /* Select */
+
+  selectButton: {
+    marginTop: 18,
+    padding: 17,
     borderRadius: 18,
     backgroundColor: '#2563eb',
     flexDirection: 'row',
     alignItems: 'center',
   },
-networkText: {
-  marginTop: 6,
-  fontSize: 14,
-  color: '#374151',
-},
 
-urlLabel: {
-  marginTop: 16,
-  fontSize: 14,
-  fontWeight: '700',
-},
-
-urlText: {
-  marginTop: 8,
-  padding: 12,
-  borderRadius: 10,
-  backgroundColor: '#fff',
-  fontSize: 14,
-  lineHeight: 21,
-},
-  shareIcon: {
-    width: 48,
-    height: 48,
+  selectIcon: {
+    width: 46,
+    height: 46,
     borderRadius: 14,
     backgroundColor:
-      'rgba(255,255,255,0.2)',
-    color: '#fff',
-    fontSize: 30,
-    textAlign: 'center',
-    lineHeight: 45,
-    marginRight: 14,
+      'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
-  shareTitle: {
+  selectIconText: {
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: '400',
+  },
+
+  selectContent: {
+    flex: 1,
+    marginLeft: 13,
+  },
+
+  selectTitle: {
     color: '#fff',
     fontSize: 17,
     fontWeight: '800',
   },
 
-  shareSubtitle: {
+  selectSubtitle: {
     marginTop: 3,
-    color: 'rgba(255,255,255,0.8)',
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 12,
   },
 
-  filesContainer: {
-    marginTop: 22,
+  arrow: {
+    color: '#fff',
+    fontSize: 28,
+    marginLeft: 10,
+  },
+
+
+  /* Files */
+
+  filesCard: {
+    marginTop: 18,
     padding: 18,
     borderRadius: 20,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
 
   filesHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
 
   filesTitle: {
     fontSize: 18,
     fontWeight: '800',
+    color: '#111827',
   },
 
-  filesCount: {
+  filesSubtitle: {
+    marginTop: 3,
+    fontSize: 13,
     color: '#6b7280',
   },
 
+  sizeBadge: {
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+  },
+
+  sizeBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#374151',
+  },
+
   fileRow: {
+    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
   },
 
   fileIcon: {
-    width: 42,
-    height: 42,
+    width: 44,
+    height: 44,
     borderRadius: 12,
-    backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#f3f4f6',
+  },
+
+  fileIconText: {
+    fontSize: 20,
   },
 
   fileInfo: {
@@ -639,103 +861,229 @@ urlText: {
   },
 
   fileName: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1f2937',
   },
 
   fileSize: {
-    marginTop: 3,
+    marginTop: 4,
+    fontSize: 12,
     color: '#6b7280',
-    fontSize: 13,
-  },
-
-  totalRow: {
-    marginTop: 10,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: '#d1d5db',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-
-  totalText: {
-    fontWeight: '700',
-  },
-
-  totalSize: {
-    fontWeight: '700',
   },
 
   createButton: {
-    marginTop: 16,
+    marginTop: 15,
     paddingVertical: 15,
     borderRadius: 14,
     backgroundColor: '#111827',
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
   },
 
   createButtonText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-
-  serverBox: {
-    marginTop: 16,
-    padding: 18,
-    borderRadius: 16,
-    backgroundColor: '#e5e7eb',
-  },
-
-  serverTitle: {
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '800',
   },
 
-  portText: {
-    marginTop: 8,
-    fontSize: 15,
+  createArrow: {
+    marginLeft: 9,
+    color: '#fff',
+    fontSize: 19,
   },
 
-  statusText: {
-    marginTop: 6,
-    fontWeight: '600',
+
+  /* Server */
+
+  statusCard: {
+    marginTop: 22,
+    padding: 18,
+    borderRadius: 22,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d1fae5',
   },
 
-  actionsRow: {
+  statusHeader: {
     flexDirection: 'row',
-    marginTop: 16,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  statusLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  statusDot: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    marginRight: 10,
+    backgroundColor: '#10b981',
+  },
+
+  statusDotPaused: {
+    backgroundColor: '#f59e0b',
+  },
+
+  statusTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111827',
+  },
+
+  statusSubtitle: {
+    marginTop: 3,
+    fontSize: 12,
+    color: '#6b7280',
+  },
+
+  liveBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#d1fae5',
+  },
+
+  liveText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#047857',
+  },
+
+  infoGrid: {
+    marginTop: 18,
+    flexDirection: 'row',
+  },
+
+  infoItem: {
+    flex: 1,
+  },
+
+  infoLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#9ca3af',
+  },
+
+  infoValue: {
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+  },
+
+  urlLabel: {
+    marginTop: 18,
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#9ca3af',
+  },
+
+  urlBox: {
+    marginTop: 7,
+    padding: 13,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+
+  urlText: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#1d4ed8',
+  },
+
+  urlActions: {
+    marginTop: 10,
+    flexDirection: 'row',
+  },
+
+  urlButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 11,
+    alignItems: 'center',
+  },
+
+  shareUrlButton: {
+    backgroundColor: '#eff6ff',
+  },
+
+  shareUrlButtonText: {
+    color: '#2563eb',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+
+  controls: {
+    marginTop: 12,
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  controlButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 11,
+    alignItems: 'center',
   },
 
   pauseButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: '#f59e0b',
-    alignItems: 'center',
-    marginRight: 8,
+    backgroundColor: '#fef3c7',
   },
 
-  resumeButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: '#16a34a',
-    alignItems: 'center',
-    marginRight: 8,
+  pauseButtonText: {
+    color: '#92400e',
+    fontWeight: '800',
+    fontSize: 13,
   },
 
   stopButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: '#dc2626',
+    backgroundColor: '#fee2e2',
+  },
+
+  stopButtonText: {
+    color: '#b91c1c',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+
+
+  /* Bottom */
+
+  securityNote: {
+    marginTop: 18,
+    paddingHorizontal: 6,
+    flexDirection: 'row',
     alignItems: 'center',
   },
 
-  actionText: {
-    color: '#fff',
-    fontWeight: '700',
+  securityIcon: {
+    width: 23,
+    height: 23,
+    borderRadius: 12,
+    textAlign: 'center',
+    lineHeight: 23,
+    backgroundColor: '#e0e7ff',
+    color: '#4f46e5',
+    fontWeight: '800',
+  },
+
+  securityText: {
+    flex: 1,
+    marginLeft: 9,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#6b7280',
+  },
+
+  disabledButton: {
+    opacity: 0.6,
   },
 
 });

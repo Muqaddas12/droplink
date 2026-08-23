@@ -1,59 +1,257 @@
 import React from 'react';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { Link, Tabs } from 'expo-router';
-import { Pressable } from 'react-native';
+import { Tabs } from 'expo-router';
+import {
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 
-// You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
-function TabBarIcon(props: {
-  name: React.ComponentProps<typeof FontAwesome>['name'];
+function TabBarIcon({
+  name,
+  color,
+}: {
+  name: React.ComponentProps<
+    typeof FontAwesome
+  >['name'];
   color: string;
 }) {
-  return <FontAwesome size={28} style={{ marginBottom: -3 }} {...props} />;
+  return (
+    <FontAwesome
+      name={name}
+      size={25}
+      color={color}
+      style={styles.tabIcon}
+    />
+  );
 }
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
+
+  const colorScheme =
+    useColorScheme();
+
+  const colors =
+    Colors[colorScheme ?? 'light'];
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
-        headerShown: useClientOnlyValue(false, true),
-      }}>
+        /*
+         * HEADER
+         */
+
+        headerShown: true,
+
+        headerTitle: () => (
+          <View
+            style={styles.headerTitle}
+          >
+            <View style={styles.logo}>
+              <Text
+                style={styles.logoText}
+              >
+                D
+              </Text>
+            </View>
+
+            <View>
+              <Text
+                style={styles.brandName}
+              >
+                DropLink
+              </Text>
+
+              <Text
+                style={styles.brandTagline}
+              >
+                Share files anywhere
+              </Text>
+            </View>
+          </View>
+        ),
+
+        headerStyle: {
+          backgroundColor: '#f8fafc',
+        },
+
+        headerShadowVisible: false,
+
+        headerTitleAlign: 'left',
+
+        /*
+         * SIMPLE BOTTOM NAV
+         */
+
+        tabBarActiveTintColor:
+          '#2563eb',
+
+        tabBarInactiveTintColor:
+          '#9ca3af',
+
+        tabBarStyle:
+          styles.tabBar,
+
+        tabBarLabelStyle:
+          styles.tabLabel,
+
+        tabBarIconStyle:
+          styles.tabIconStyle,
+
+        tabBarItemStyle:
+          styles.tabItem,
+
+        tabBarShowLabel: true,
+      }}
+    >
+
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Tab One',
-          tabBarIcon: ({ color }) => <TabBarIcon name="code" color={color} />,
-          headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable>
-                {({ pressed }) => (
-                  <FontAwesome
-                    name="info-circle"
-                    size={25}
-                    color={Colors[colorScheme ?? 'light'].text}
-                    style={{ marginRight: 15, opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
-              </Pressable>
-            </Link>
+          title: 'Local Share',
+
+          tabBarLabel: 'Local Share',
+
+          tabBarIcon: ({
+            color,
+          }) => (
+            <TabBarIcon
+              name="wifi"
+              color={color}
+            />
           ),
         }}
       />
+
       <Tabs.Screen
         name="two"
         options={{
-          title: 'Tab Two',
-          tabBarIcon: ({ color }) => <TabBarIcon name="code" color={color} />,
+          title: 'Internet Share',
+
+          tabBarLabel:
+            'Internet Share',
+
+          tabBarIcon: ({
+            color,
+          }) => (
+            <TabBarIcon
+              name="globe"
+              color={color}
+            />
+          ),
         }}
       />
+
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+
+  /*
+   * HEADER
+   */
+
+  headerTitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  logo: {
+    width: 38,
+    height: 38,
+
+    borderRadius: 12,
+
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    backgroundColor: '#2563eb',
+
+    marginRight: 10,
+  },
+
+  logoText: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+
+  brandName: {
+    fontSize: 19,
+    lineHeight: 21,
+
+    fontWeight: '900',
+
+    color: '#111827',
+
+    letterSpacing: -0.3,
+  },
+
+  brandTagline: {
+    marginTop: 1,
+
+    fontSize: 10,
+
+    fontWeight: '600',
+
+    color: '#9ca3af',
+  },
+
+
+  /*
+   * ORIGINAL-STYLE BOTTOM BAR
+   */
+
+  tabBar: {
+    height: 64,
+
+    backgroundColor: '#ffffff',
+
+    borderTopWidth: 1,
+
+    borderTopColor: '#e5e7eb',
+
+    elevation: 8,
+
+    shadowColor: '#000',
+
+    shadowOffset: {
+      width: 0,
+      height: -2,
+    },
+
+    shadowOpacity: 0.06,
+
+    shadowRadius: 8,
+
+    paddingTop: 4,
+
+    paddingBottom: 5,
+  },
+
+  tabItem: {
+    height: 58,
+  },
+
+  tabLabel: {
+    fontSize: 11,
+
+    fontWeight: '700',
+
+    marginTop: -1,
+  },
+
+  tabIcon: {
+    marginBottom: -2,
+  },
+
+  tabIconStyle: {
+    marginTop: 2,
+  },
+
+});
