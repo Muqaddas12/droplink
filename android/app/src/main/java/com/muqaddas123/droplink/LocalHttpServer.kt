@@ -14,12 +14,25 @@ import java.net.URLEncoder
 import java.util.Collections
 import java.util.concurrent.Executors
 
+// =========================================================
+// SHARED FILE
+// =========================================================
+
 data class SharedFile(
     val uri: Uri,
     val name: String,
     val mimeType: String?,
-    val size: Long
+    val size: Long,
+
+    // Number of successful downloads
+    // by other users.
+    @Volatile
+    var downloadCount: Int = 0
 )
+
+// =========================================================
+// RECEIVED FILE
+// =========================================================
 
 data class ReceivedFile(
     val name: String,
@@ -28,6 +41,10 @@ data class ReceivedFile(
     val path: String,
     val category: String
 )
+
+// =========================================================
+// LOCAL HTTP SERVER
+// =========================================================
 
 class LocalHttpServer(
     private val contentResolver: ContentResolver
@@ -41,10 +58,26 @@ class LocalHttpServer(
     @Volatile
     private var running = false
 
-    @Volatile
-    private var sharedFiles: List<SharedFile> =
-        emptyList()
+    /*
+     * Shared files can be modified while the
+     * server is running.
+     *
+     * This allows:
+     *
+     * Start server
+     *      ↓
+     * Add more files
+     *      ↓
+     * Server keeps running
+     */
+    private val sharedFiles =
+        Collections.synchronizedList(
+            mutableListOf<SharedFile>()
+        )
 
+    /*
+     * Files received from browser/device.
+     */
     private val receivedFiles =
         Collections.synchronizedList(
             mutableListOf<ReceivedFile>()
@@ -53,33 +86,105 @@ class LocalHttpServer(
     var port: Int = 0
         private set
 
+    // =========================================================
+    // SERVER STATE
+    // =========================================================
+
+    fun isRunning(): Boolean {
+        return running
+    }
 
     // =========================================================
-    // FILES SHARED BY USER A
+    // REPLACE SHARED FILES
     // =========================================================
 
     fun setFiles(
         files: List<SharedFile>
     ) {
 
-        sharedFiles = files
+        synchronized(sharedFiles) {
+
+            sharedFiles.clear()
+
+            sharedFiles.addAll(
+                files
+            )
+        }
     }
 
+    // =========================================================
+    // ADD MORE SHARED FILES
+    // =========================================================
+
+    fun addFiles(
+        files: List<SharedFile>
+    ) {
+
+        if (files.isEmpty()) {
+            return
+        }
+
+        synchronized(sharedFiles) {
+
+            /*
+             * Prevent accidentally adding the same
+             * URI multiple times.
+             */
+            val existingUris =
+                sharedFiles
+                    .map {
+                        it.uri.toString()
+                    }
+                    .toHashSet()
+
+            files.forEach { file ->
+
+                if (
+                    !existingUris.contains(
+                        file.uri.toString()
+                    )
+                ) {
+
+                    sharedFiles.add(
+                        file
+                    )
+
+                    existingUris.add(
+                        file.uri.toString()
+                    )
+                }
+            }
+        }
+
+        android.util.Log.d(
+            "DropLink",
+            "ADDED ${files.size} FILE(S). TOTAL=${getSharedFiles().size}"
+        )
+    }
 
     // =========================================================
-    // RECEIVED FILES
+    // GET SHARED FILES
+    // =========================================================
+
+    fun getSharedFiles(): List<SharedFile> {
+
+        synchronized(sharedFiles) {
+
+            return sharedFiles.toList()
+        }
+    }
+
+    // =========================================================
+    // GET RECEIVED FILES
     // =========================================================
 
     fun getReceivedFiles(): List<ReceivedFile> {
 
-        synchronized(
-            receivedFiles
-        ) {
+        synchronized(receivedFiles) {
 
             return receivedFiles.toList()
         }
     }
-
 
     // =========================================================
     // START
@@ -87,7 +192,12 @@ class LocalHttpServer(
 
     fun start(): Int {
 
+        /*
+         * If already running, don't create another
+         * ServerSocket.
+         */
         if (running) {
+
             return port
         }
 
@@ -109,15 +219,18 @@ class LocalHttpServer(
                         serverSocket!!.accept()
 
                     /*
-                     * Every connection gets
-                     * its own worker.
+                     * IMPORTANT:
                      *
-                     * This allows:
+                     * Every connection gets its own
+                     * worker thread.
                      *
-                     * Browser A -> download
-                     * Browser B -> upload
+                     * Therefore:
                      *
-                     * at the same time.
+                     * Device B downloading
+                     * +
+                     * Device C uploading
+                     *
+                     * can happen simultaneously.
                      */
                     executor.execute {
 
@@ -148,7 +261,6 @@ class LocalHttpServer(
         return port
     }
 
-
     // =========================================================
     // STOP
     // =========================================================
@@ -166,17 +278,19 @@ class LocalHttpServer(
 
         serverSocket = null
 
-        sharedFiles =
-            emptyList()
-
         /*
-         * Don't delete receivedFiles here.
+         * IMPORTANT:
          *
-         * This lets the React Native screen
-         * read the files after the transfer.
+         * Do NOT clear receivedFiles.
+         *
+         * The React Native UI may still need to
+         * display previously received files.
          */
-    }
+        synchronized(sharedFiles) {
 
+            sharedFiles.clear()
+        }
+    }
 
     // =========================================================
     // CLIENT
@@ -220,6 +334,7 @@ class LocalHttpServer(
                 if (
                     parts.size < 2
                 ) {
+
                     return
                 }
 
@@ -247,12 +362,12 @@ class LocalHttpServer(
                     "$method $decodedPath"
                 )
 
-
                 when {
 
-                    /*
-                     * Browser home page
-                     */
+                    // -------------------------------------------------
+                    // HOME
+                    // -------------------------------------------------
+
                     method == "GET" &&
                         (
                             decodedPath == "/" ||
@@ -264,10 +379,36 @@ class LocalHttpServer(
                         )
                     }
 
+                    // -------------------------------------------------
+                    // SHARED FILES JSON
+                    // -------------------------------------------------
 
-                    /*
-                     * Download
-                     */
+                    method == "GET" &&
+                        decodedPath ==
+                        "/shared" -> {
+
+                        sendSharedFilesJson(
+                            output
+                        )
+                    }
+
+                    // -------------------------------------------------
+                    // RECEIVED FILES JSON
+                    // -------------------------------------------------
+
+                    method == "GET" &&
+                        decodedPath ==
+                        "/received" -> {
+
+                        sendReceivedFilesJson(
+                            output
+                        )
+                    }
+
+                    // -------------------------------------------------
+                    // DOWNLOAD
+                    // -------------------------------------------------
+
                     method == "GET" &&
                         decodedPath.startsWith(
                             "/download/"
@@ -279,24 +420,10 @@ class LocalHttpServer(
                         )
                     }
 
+                    // -------------------------------------------------
+                    // UPLOAD
+                    // -------------------------------------------------
 
-                    /*
-                     * Browser asks for
-                     * received files.
-                     */
-                    method == "GET" &&
-                        decodedPath ==
-                        "/received" -> {
-
-                        sendReceivedFilesJson(
-                            output
-                        )
-                    }
-
-
-                    /*
-                     * Upload
-                     */
                     method == "POST" &&
                         decodedPath ==
                         "/upload" -> {
@@ -308,6 +435,9 @@ class LocalHttpServer(
                         )
                     }
 
+                    // -------------------------------------------------
+                    // NOT FOUND
+                    // -------------------------------------------------
 
                     else -> {
 
@@ -332,7 +462,6 @@ class LocalHttpServer(
             }
         }
     }
-
 
     // =========================================================
     // HTTP HEADER READER
@@ -387,8 +516,7 @@ class LocalHttpServer(
                 current
 
             /*
-             * Prevent enormous
-             * HTTP headers.
+             * Prevent enormous HTTP headers.
              */
             if (
                 builder.length >
@@ -401,7 +529,6 @@ class LocalHttpServer(
 
         return builder.toString()
     }
-
 
     // =========================================================
     // GET HEADER
@@ -436,7 +563,6 @@ class LocalHttpServer(
             ?.trim()
     }
 
-
     // =========================================================
     // INDEX PAGE
     // =========================================================
@@ -444,6 +570,9 @@ class LocalHttpServer(
     private fun sendIndexPage(
         output: BufferedOutputStream
     ) {
+
+        val files =
+            getSharedFiles()
 
         val html =
             buildString {
@@ -455,9 +584,7 @@ class LocalHttpServer(
 
 <head>
 
-<meta
-    charset="UTF-8"
->
+<meta charset="UTF-8">
 
 <meta
     name="viewport"
@@ -533,11 +660,17 @@ body {
 .file-size {
     color: #6b7280;
     margin-top: 5px;
-    margin-bottom: 10px;
+}
+
+.file-downloads {
+    color: #2563eb;
+    margin-top: 5px;
+    font-size: 13px;
 }
 
 .download {
     display: inline-block;
+    margin-top: 10px;
     padding: 10px 16px;
     border-radius: 10px;
     background: #2563eb;
@@ -592,7 +725,6 @@ input[type=file] {
     height: 100%;
     width: 0%;
     background: #10b981;
-    transition: width .1s linear;
 }
 
 .received-file {
@@ -637,7 +769,6 @@ Send and receive files directly.
 
 </div>
 
-
 <div class="card">
 
 <div class="card-title">
@@ -667,7 +798,6 @@ Select files to upload.
 
 </div>
 
-
 <div class="card">
 
 <div class="card-title">
@@ -678,7 +808,7 @@ Files available from this device
                 )
 
                 if (
-                    sharedFiles.isEmpty()
+                    files.isEmpty()
                 ) {
 
                     append(
@@ -691,19 +821,28 @@ No shared files.
 
                 } else {
 
-                    sharedFiles
-                        .forEachIndexed {
-                            index,
-                            file ->
+                    files.forEachIndexed {
 
-                            val encodedName =
-                                URLEncoder.encode(
-                                    file.name,
-                                    "UTF-8"
-                                )
+                        index,
+                        file ->
 
-                            append(
-                                """
+                        val encodedName =
+                            URLEncoder.encode(
+                                file.name,
+                                "UTF-8"
+                            )
+
+                        val downloadText =
+                            if (
+                                file.downloadCount == 1
+                            ) {
+                                "Downloaded 1 time"
+                            } else {
+                                "Downloaded ${file.downloadCount} times"
+                            }
+
+                        append(
+                            """
 <div class="file">
 
 <div class="file-name">
@@ -712,6 +851,10 @@ ${escapeHtml(file.name)}
 
 <div class="file-size">
 ${formatSize(file.size)}
+</div>
+
+<div class="file-downloads">
+$downloadText
 </div>
 
 <a
@@ -723,16 +866,14 @@ Download
 
 </div>
 """
-                            )
-                        }
+                        )
+                    }
                 }
-
 
                 append(
                     """
 
 </div>
-
 
 <div class="card">
 
@@ -750,9 +891,7 @@ Checking received files...
 
 </div>
 
-
 </div>
-
 
 <script>
 
@@ -909,18 +1048,14 @@ function uploadNext(
         return;
     }
 
-
     const file =
         files[index];
-
 
     const total =
         Number(file.size) || 0;
 
-
     const startedAt =
         Date.now();
-
 
     status.innerHTML =
         "Uploading <b>" +
@@ -1000,27 +1135,16 @@ function uploadNext(
     xhr.upload.onprogress =
         function(event) {
 
-            /*
-             * IMPORTANT:
-             *
-             * Do NOT use event.total.
-             *
-             * We already know the real
-             * file size from file.size.
-             */
             const loaded =
                 Number(
                     event.loaded
                 ) || 0;
 
-
             const safeTotal =
                 total;
 
-
             let percent =
                 0;
-
 
             if (
                 safeTotal > 0
@@ -1031,13 +1155,7 @@ function uploadNext(
                         loaded /
                         safeTotal
                     ) * 100;
-
-            } else {
-
-                percent =
-                    0;
             }
-
 
             percent =
                 Math.min(
@@ -1048,7 +1166,6 @@ function uploadNext(
                     )
                 );
 
-
             const elapsedSeconds =
                 Math.max(
                     0.001,
@@ -1058,11 +1175,9 @@ function uploadNext(
                     ) / 1000
                 );
 
-
             const speed =
                 loaded /
                 elapsedSeconds;
-
 
             const remaining =
                 Math.max(
@@ -1071,10 +1186,8 @@ function uploadNext(
                     loaded
                 );
 
-
             let eta =
                 0;
-
 
             if (
                 speed > 0
@@ -1085,36 +1198,30 @@ function uploadNext(
                     speed;
             }
 
-
             const amount =
                 document.getElementById(
                     "uploadAmount"
                 );
-
 
             const percentElement =
                 document.getElementById(
                     "uploadPercent"
                 );
 
-
             const speedElement =
                 document.getElementById(
                     "uploadSpeed"
                 );
-
 
             const etaElement =
                 document.getElementById(
                     "uploadEta"
                 );
 
-
             const bar =
                 document.getElementById(
                     "progressBar"
                 );
-
 
             if (amount) {
 
@@ -1128,7 +1235,6 @@ function uploadNext(
                     );
             }
 
-
             if (
                 percentElement
             ) {
@@ -1140,7 +1246,6 @@ function uploadNext(
                     "%";
             }
 
-
             if (
                 speedElement
             ) {
@@ -1150,7 +1255,6 @@ function uploadNext(
                         speed
                     );
             }
-
 
             if (
                 etaElement
@@ -1163,7 +1267,6 @@ function uploadNext(
                         )
                         : "--:--";
             }
-
 
             if (bar) {
 
@@ -1194,9 +1297,7 @@ function uploadNext(
                     ) +
                     " uploaded successfully.";
 
-
                 loadReceivedFiles();
-
 
                 /*
                  * Start next file.
@@ -1290,7 +1391,6 @@ async function loadReceivedFiles() {
                 "/received"
             );
 
-
         if (
             !response.ok
         ) {
@@ -1301,21 +1401,17 @@ async function loadReceivedFiles() {
             );
         }
 
-
         const files =
             await response.json();
-
 
         const container =
             document.getElementById(
                 "receivedFiles"
             );
 
-
         if (!container) {
             return;
         }
-
 
         if (
             !files ||
@@ -1329,7 +1425,6 @@ async function loadReceivedFiles() {
 
             return;
         }
-
 
         container.innerHTML =
             files
@@ -1363,7 +1458,6 @@ async function loadReceivedFiles() {
                 )
                 .join("");
 
-
     } catch (error) {
 
         console.log(
@@ -1374,19 +1468,9 @@ async function loadReceivedFiles() {
 }
 
 
-/*
- * Check immediately.
- */
 loadReceivedFiles();
 
 
-/*
- * Refresh every 2 seconds.
- *
- * This means when another device
- * uploads a file, the list appears
- * without restarting the server.
- */
 setInterval(
     loadReceivedFiles,
     2000
@@ -1401,7 +1485,6 @@ setInterval(
                 )
             }
 
-
         sendResponse(
             output,
             "200 OK",
@@ -1411,7 +1494,6 @@ setInterval(
             )
         )
     }
-
 
     // =========================================================
     // DOWNLOAD
@@ -1426,7 +1508,6 @@ setInterval(
             path
                 .removePrefix("/")
                 .split("/")
-
 
         if (
             parts.size < 2 ||
@@ -1443,11 +1524,9 @@ setInterval(
             return
         }
 
-
         val index =
             parts[1]
                 .toIntOrNull()
-
 
         if (
             index == null
@@ -1462,13 +1541,14 @@ setInterval(
             return
         }
 
-
         val file =
-            sharedFiles
-                .getOrNull(
-                    index
-                )
+            synchronized(sharedFiles) {
 
+                sharedFiles
+                    .getOrNull(
+                        index
+                    )
+            }
 
         if (
             file == null
@@ -1483,7 +1563,6 @@ setInterval(
             return
         }
 
-
         try {
 
             val inputStream =
@@ -1491,7 +1570,6 @@ setInterval(
                     .openInputStream(
                         file.uri
                     )
-
 
             if (
                 inputStream == null
@@ -1506,19 +1584,16 @@ setInterval(
                 return
             }
 
-
             inputStream.use { input ->
 
                 val mimeType =
                     file.mimeType
                         ?: "application/octet-stream"
 
-
                 val safeName =
                     escapeHeader(
                         file.name
                     )
-
 
                 val header =
                     buildString {
@@ -1557,7 +1632,6 @@ setInterval(
                         )
                     }
 
-
                 output.write(
                     header.toByteArray(
                         Charsets.UTF_8
@@ -1566,12 +1640,13 @@ setInterval(
 
                 output.flush()
 
-
                 val buffer =
                     ByteArray(
                         1024 * 1024
                     )
 
+                var completed =
+                    true
 
                 while (true) {
 
@@ -1579,7 +1654,6 @@ setInterval(
                         input.read(
                             buffer
                         )
-
 
                     if (
                         bytesRead ==
@@ -1589,7 +1663,6 @@ setInterval(
                         break
                     }
 
-
                     output.write(
                         buffer,
                         0,
@@ -1597,10 +1670,28 @@ setInterval(
                     )
                 }
 
-
                 output.flush()
-            }
 
+                /*
+                 * Only count a download when
+                 * the complete file stream finished.
+                 */
+                if (completed) {
+
+                    synchronized(sharedFiles) {
+
+                        file.downloadCount++
+
+                        android.util.Log.d(
+                            "DropLink",
+                            "DOWNLOAD COMPLETE: " +
+                                file.name +
+                                " count=" +
+                                file.downloadCount
+                        )
+                    }
+                }
+            }
 
         } catch (e: Exception) {
 
@@ -1611,7 +1702,6 @@ setInterval(
             )
         }
     }
-
 
     // =========================================================
     // UPLOAD
@@ -1630,7 +1720,6 @@ setInterval(
             )
                 ?.toLongOrNull()
 
-
         if (
             contentLength == null ||
             contentLength < 0
@@ -1645,13 +1734,11 @@ setInterval(
             return
         }
 
-
         val encodedName =
             getHeader(
                 request,
                 "X-File-Name"
             )
-
 
         val requestedName =
             try {
@@ -1677,7 +1764,6 @@ setInterval(
                 "uploaded_file"
             }
 
-
         val mimeType =
             getHeader(
                 request,
@@ -1688,25 +1774,21 @@ setInterval(
                 }
                 ?: "application/octet-stream"
 
-
         val destination =
             createUploadDestination(
                 requestedName,
                 mimeType
             )
 
-
         val category =
             destination.parentFile
                 ?.name
                 ?: "Others"
 
-
         android.util.Log.d(
             "DropLink",
             "UPLOAD START: $requestedName"
         )
-
 
         try {
 
@@ -1719,14 +1801,11 @@ setInterval(
                         1024 * 1024
                     )
 
-
                 var remaining =
                     contentLength
 
-
                 var received =
                     0L
-
 
                 while (
                     remaining > 0
@@ -1738,14 +1817,12 @@ setInterval(
                             remaining
                         ).toInt()
 
-
                     val bytesRead =
                         input.read(
                             buffer,
                             0,
                             requested
                         )
-
 
                     if (
                         bytesRead ==
@@ -1757,29 +1834,24 @@ setInterval(
                         )
                     }
 
-
                     fileOutput.write(
                         buffer,
                         0,
                         bytesRead
                     )
 
-
                     received +=
                         bytesRead
-
 
                     remaining -=
                         bytesRead
                 }
 
-
                 fileOutput.flush()
 
-
                 /*
-                 * Only add the file after the
-                 * entire upload has completed.
+                 * Only expose the file after the
+                 * complete upload has finished.
                  */
                 val receivedFile =
                     ReceivedFile(
@@ -1799,7 +1871,6 @@ setInterval(
                             category
                     )
 
-
                 synchronized(
                     receivedFiles
                 ) {
@@ -1809,7 +1880,6 @@ setInterval(
                     )
                 }
 
-
                 android.util.Log.d(
                     "DropLink",
                     "UPLOAD COMPLETE: " +
@@ -1817,13 +1887,11 @@ setInterval(
                 )
             }
 
-
             sendText(
                 output,
                 "200 OK",
                 "Upload completed: ${destination.name}"
             )
-
 
         } catch (e: Exception) {
 
@@ -1834,13 +1902,11 @@ setInterval(
             } catch (_: Exception) {
             }
 
-
             android.util.Log.e(
                 "DropLink",
                 "UPLOAD ERROR",
                 e
             )
-
 
             sendText(
                 output,
@@ -1849,7 +1915,6 @@ setInterval(
             )
         }
     }
-
 
     // =========================================================
     // CREATE UPLOAD DESTINATION
@@ -1865,13 +1930,11 @@ setInterval(
                 originalName
             )
 
-
         val directoryName =
             getUploadDirectoryName(
                 safeName,
                 mimeType
             )
-
 
         val root =
             File(
@@ -1882,13 +1945,11 @@ setInterval(
                 "DropLink"
             )
 
-
         val directory =
             File(
                 root,
                 directoryName
             )
-
 
         if (
             !directory.exists()
@@ -1896,7 +1957,6 @@ setInterval(
 
             directory.mkdirs()
         }
-
 
         if (
             !directory.exists()
@@ -1908,13 +1968,11 @@ setInterval(
             )
         }
 
-
         return createUniqueFile(
             directory,
             safeName
         )
     }
-
 
     // =========================================================
     // CATEGORY
@@ -1928,7 +1986,6 @@ setInterval(
         val type =
             mimeType.lowercase()
 
-
         if (
             type.startsWith(
                 "image/"
@@ -1937,7 +1994,6 @@ setInterval(
 
             return "Images"
         }
-
 
         if (
             type.startsWith(
@@ -1948,7 +2004,6 @@ setInterval(
             return "Videos"
         }
 
-
         if (
             type.startsWith(
                 "audio/"
@@ -1958,7 +2013,6 @@ setInterval(
             return "Audio"
         }
 
-
         val extension =
             fileName
                 .substringAfterLast(
@@ -1966,7 +2020,6 @@ setInterval(
                     ""
                 )
                 .lowercase()
-
 
         return when (
             extension
@@ -1982,7 +2035,6 @@ setInterval(
             "heif" ->
                 "Images"
 
-
             "mp4",
             "mkv",
             "avi",
@@ -1992,7 +2044,6 @@ setInterval(
             "m4v" ->
                 "Videos"
 
-
             "mp3",
             "wav",
             "aac",
@@ -2000,7 +2051,6 @@ setInterval(
             "ogg",
             "m4a" ->
                 "Audio"
-
 
             "pdf",
             "doc",
@@ -2015,7 +2065,6 @@ setInterval(
             "odt" ->
                 "Documents"
 
-
             "zip",
             "rar",
             "7z",
@@ -2023,12 +2072,10 @@ setInterval(
             "gz" ->
                 "Archives"
 
-
             else ->
                 "Others"
         }
     }
-
 
     // =========================================================
     // UNIQUE NAME
@@ -2045,7 +2092,6 @@ setInterval(
                 originalName
             )
 
-
         if (
             !original.exists()
         ) {
@@ -2053,11 +2099,9 @@ setInterval(
             return original
         }
 
-
         val dotIndex =
             originalName
                 .lastIndexOf(".")
-
 
         val baseName =
             if (
@@ -2075,7 +2119,6 @@ setInterval(
                 originalName
             }
 
-
         val extension =
             if (
                 dotIndex > 0
@@ -2091,10 +2134,8 @@ setInterval(
                 ""
             }
 
-
         var counter =
             1
-
 
         while (true) {
 
@@ -2104,7 +2145,6 @@ setInterval(
                     "$baseName ($counter)$extension"
                 )
 
-
             if (
                 !candidate.exists()
             ) {
@@ -2112,11 +2152,9 @@ setInterval(
                 return candidate
             }
 
-
             counter++
         }
     }
-
 
     // =========================================================
     // SANITIZE
@@ -2174,7 +2212,6 @@ setInterval(
                 )
                 .trim()
 
-
         if (
             name.isEmpty() ||
             name == "." ||
@@ -2185,14 +2222,12 @@ setInterval(
                 "uploaded_file"
         }
 
-
         if (
             name.length > 240
         ) {
 
             val dot =
                 name.lastIndexOf(".")
-
 
             if (
                 dot > 0
@@ -2206,14 +2241,12 @@ setInterval(
                         )
                         .take(220)
 
-
                 val extension =
                     name
                         .substring(
                             dot
                         )
                         .take(20)
-
 
                 name =
                     base +
@@ -2226,10 +2259,107 @@ setInterval(
             }
         }
 
-
         return name
     }
 
+    // =========================================================
+    // SHARED FILES JSON
+    // =========================================================
+
+    private fun sendSharedFilesJson(
+        output: BufferedOutputStream
+    ) {
+
+        val files =
+            getSharedFiles()
+
+        val json =
+            buildString {
+
+                append("[")
+
+                files.forEachIndexed {
+
+                    index,
+                    file ->
+
+                    if (
+                        index > 0
+                    ) {
+
+                        append(",")
+                    }
+
+                    append("{")
+
+                    append(
+                        "\"index\":"
+                    )
+
+                    append(
+                        index
+                    )
+
+                    append(",")
+
+                    append(
+                        "\"name\":\""
+                    )
+
+                    append(
+                        escapeJson(
+                            file.name
+                        )
+                    )
+
+                    append("\",")
+
+                    append(
+                        "\"mimeType\":\""
+                    )
+
+                    append(
+                        escapeJson(
+                            file.mimeType
+                                ?: "application/octet-stream"
+                        )
+                    )
+
+                    append("\",")
+
+                    append(
+                        "\"size\":"
+                    )
+
+                    append(
+                        file.size
+                    )
+
+                    append(",")
+
+                    append(
+                        "\"downloadCount\":"
+                    )
+
+                    append(
+                        file.downloadCount
+                    )
+
+                    append("}")
+                }
+
+                append("]")
+            }
+
+        sendResponse(
+            output,
+            "200 OK",
+            "application/json; charset=utf-8",
+            json.toByteArray(
+                Charsets.UTF_8
+            )
+        )
+    }
 
     // =========================================================
     // RECEIVED JSON
@@ -2242,14 +2372,13 @@ setInterval(
         val files =
             getReceivedFiles()
 
-
         val json =
             buildString {
 
                 append("[")
 
-
                 files.forEachIndexed {
+
                     index,
                     file ->
 
@@ -2259,7 +2388,6 @@ setInterval(
 
                         append(",")
                     }
-
 
                     append("{")
 
@@ -2275,7 +2403,6 @@ setInterval(
 
                     append("\",")
 
-
                     append(
                         "\"mimeType\":\""
                     )
@@ -2288,7 +2415,6 @@ setInterval(
 
                     append("\",")
 
-
                     append(
                         "\"size\":"
                     )
@@ -2298,7 +2424,6 @@ setInterval(
                     )
 
                     append(",")
-
 
                     append(
                         "\"path\":\""
@@ -2312,7 +2437,6 @@ setInterval(
 
                     append("\",")
 
-
                     append(
                         "\"category\":\""
                     )
@@ -2325,14 +2449,11 @@ setInterval(
 
                     append("\"")
 
-
                     append("}")
                 }
 
-
                 append("]")
             }
-
 
         sendResponse(
             output,
@@ -2343,7 +2464,6 @@ setInterval(
             )
         )
     }
-
 
     // =========================================================
     // RESPONSE
@@ -2384,22 +2504,18 @@ setInterval(
                 )
             }
 
-
         output.write(
             header.toByteArray(
                 Charsets.UTF_8
             )
         )
 
-
         output.write(
             data
         )
 
-
         output.flush()
     }
-
 
     // =========================================================
     // TEXT RESPONSE
@@ -2420,7 +2536,6 @@ setInterval(
             )
         )
     }
-
 
     // =========================================================
     // HTML ESCAPE
@@ -2453,7 +2568,6 @@ setInterval(
             )
     }
 
-
     // =========================================================
     // JSON ESCAPE
     // =========================================================
@@ -2485,7 +2599,6 @@ setInterval(
             )
     }
 
-
     // =========================================================
     // HTTP HEADER ESCAPE
     // =========================================================
@@ -2513,7 +2626,6 @@ setInterval(
             )
     }
 
-
     // =========================================================
     // SIZE
     // =========================================================
@@ -2529,7 +2641,6 @@ setInterval(
             return "$size B"
         }
 
-
         if (
             size <
             1024L * 1024L
@@ -2539,7 +2650,6 @@ setInterval(
                 size / 1024.0
             )
         }
-
 
         if (
             size <
@@ -2556,7 +2666,6 @@ setInterval(
                     )
             )
         }
-
 
         return "%.2f GB".format(
             size /

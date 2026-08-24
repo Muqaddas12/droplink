@@ -71,6 +71,7 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        
     }
 
     buildTypes {
@@ -79,7 +80,7 @@ android {
         }
 
         release {
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release    
 
             def enableShrinkResources =
                     findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
