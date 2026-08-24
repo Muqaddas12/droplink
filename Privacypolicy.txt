@@ -1,0 +1,90 @@
+# DropLink Privacy Policy
+
+**Last updated: 25 August 2026**
+
+DropLink ("we", "our", or "the app") is an easy file-sharing application that allows users to send and receive files between devices.
+
+## 1. Information We Collect
+
+DropLink is designed primarily for direct file sharing. We do not require users to create an account to use the core file-sharing features.
+
+Depending on how you use the app, DropLink may process:
+
+- Files and folders that you select for sharing or receiving.
+- Network information required to establish connections between devices, such as IP addresses and local network information.
+- Basic device and application information required for the app to operate correctly.
+
+## 2. Files and Content
+
+Files selected by you for sharing are used only to provide the file-sharing functionality you request.
+
+DropLink does not claim ownership of your files or content. You are responsible for the files you choose to share and for ensuring that you have the right to share them.
+
+## 3. How We Use Information
+
+Information processed by DropLink may be used to:
+
+- Establish connections between devices.
+- Send and receive files.
+- Display transfer progress and status.
+- Maintain the functionality, security, and reliability of the application.
+- Diagnose technical problems when necessary.
+
+## 4. Data Sharing
+
+DropLink does not sell your personal information.
+
+Files are shared with other devices only as directed by you through the application's file-sharing features.
+
+We do not intentionally share your files with third parties for advertising or marketing purposes.
+
+## 5. Internet and Network Connections
+
+DropLink may use network connections to enable file transfers and device communication.
+
+Depending on the connection method and features being used, network traffic may pass through local networks or other networking infrastructure required to establish communication.
+
+## 6. Data Storage
+
+Files received through DropLink may be stored on your device according to the application's functionality and the permissions granted by you.
+
+You can manage or delete received files using the application's available controls or your device's file management features.
+
+## 7. Permissions
+
+DropLink may request permissions that are necessary for features such as:
+
+- Accessing files that you choose to share.
+- Saving files received from another device.
+- Accessing network connectivity.
+- Discovering or communicating with nearby devices when required by the Android operating system and the application's features.
+
+Permissions are used only for the functionality they are required for.
+
+## 8. Children's Privacy
+
+DropLink is not specifically directed toward children under the age of 13. We do not knowingly collect personal information from children for advertising or marketing purposes.
+
+## 9. Security
+
+We take reasonable measures to protect information processed by the application. However, no method of electronic transmission or storage can be guaranteed to be completely secure.
+
+Users should only share files and information with devices and people they trust.
+
+## 10. Third-Party Services
+
+If third-party services are added to DropLink in the future, this Privacy Policy may be updated to describe the information those services process.
+
+## 11. Changes to This Privacy Policy
+
+We may update this Privacy Policy from time to time. Any changes will be published at the location where this policy is made available, with an updated "Last updated" date.
+
+## 12. Contact Us
+
+If you have questions about this Privacy Policy or DropLink, please contact us:
+
+**Email:** [support@mtbyown.com]
+
+---
+
+**DropLink (Easy File Sharing)**
