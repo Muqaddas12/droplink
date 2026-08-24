@@ -1,14 +1,38 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-  <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
-    <item name="android:enforceNavigationBarContrast" tools:targetApi="29">true</item>
-    <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
-    <item name="colorPrimary">@color/colorPrimary</item>
-    <item name="android:statusBarColor">#ffffff</item>
-  </style>
-  <style name="Theme.App.SplashScreen" parent="Theme.SplashScreen">
-    <item name="windowSplashScreenBackground">@color/splashscreen_background</item>
-    <item name="windowSplashScreenAnimatedIcon">@drawable/splashscreen_logo</item>
-    <item name="postSplashScreenTheme">@style/AppTheme</item>
-    <item name="android:windowSplashScreenBehavior">icon_preferred</item>
-  </style>
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Normal application theme -->
+    <style
+        name="AppTheme"
+        parent="Theme.MaterialComponents.DayNight.NoActionBar">
+
+        <item name="android:windowBackground">
+            @android:color/white
+        </item>
+
+    </style>
+
+
+    <!-- Native Android splash theme -->
+    <style
+        name="Theme.App.SplashScreen"
+        parent="Theme.SplashScreen">
+
+        <!-- Splash background -->
+        <item name="windowSplashScreenBackground">
+            @android:color/white
+        </item>
+
+        <!-- DropLink logo -->
+        <item name="windowSplashScreenAnimatedIcon">
+            @drawable/droplink_logo
+        </item>
+
+        <!-- Theme after splash -->
+        <item name="postSplashScreenTheme">
+            @style/AppTheme
+        </item>
+
+    </style>
+
 </resources>

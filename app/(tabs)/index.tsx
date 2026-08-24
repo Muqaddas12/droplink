@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Text,
   View,
+  Share,
 } from 'react-native';
 
 import { pickFiles } from '@/lib/nativeFilePicker';
@@ -144,6 +145,30 @@ export default function TabOneScreen() {
 
       Alert.alert(
         'Error',
+        String(error)
+      );
+    }
+  };
+
+
+  const handleShareUrl = async () => {
+    if (!serverInfo?.url) {
+      return;
+    }
+
+    try {
+      await Share.share({
+        message: `Download files from DropLink:\n${serverInfo.url}`,
+        url: serverInfo.url,
+      });
+    } catch (error) {
+      console.error(
+        'SHARE URL ERROR:',
+        error
+      );
+
+      Alert.alert(
+        'Share Error',
         String(error)
       );
     }
@@ -563,6 +588,15 @@ export default function TabOneScreen() {
             </Text>
 
           </View>
+
+          <Pressable
+            style={styles.shareUrlButton}
+            onPress={handleShareUrl}
+          >
+            <Text style={styles.shareUrlButtonText}>
+              ↗  Share URL
+            </Text>
+          </Pressable>
 
 
           <View style={styles.serverInfoRow}>
@@ -1030,6 +1064,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     color: '#2563eb',
+  },
+
+  shareUrlButton: {
+    marginTop: 10,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#2563eb',
+  },
+
+  shareUrlButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
   },
 
   serverInfoRow: {
