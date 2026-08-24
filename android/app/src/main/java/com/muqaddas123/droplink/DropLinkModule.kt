@@ -2,21 +2,32 @@ package com.muqaddas123.droplink
 
 import android.net.Uri
 
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 
+
 class DropLinkModule(
     private val reactContext: ReactApplicationContext
-) : ReactContextBaseJavaModule(reactContext) {
+) : ReactContextBaseJavaModule(
+    reactContext
+) {
 
-    private var server: LocalHttpServer? = null
+    private var server:
+        LocalHttpServer? = null
+
 
     override fun getName(): String {
         return "DropLink"
     }
+
+
+    // =========================================================
+    // START SERVER
+    // =========================================================
 
     @ReactMethod
     fun startServer(
@@ -26,84 +37,144 @@ class DropLinkModule(
 
         try {
 
-            if (files.size() == 0) {
+            if (
+                files.size() == 0
+            ) {
+
                 promise.reject(
                     "NO_FILES",
                     "No files selected."
                 )
+
                 return
             }
+
 
             val sharedFiles =
                 mutableListOf<SharedFile>()
 
+
             for (
-                index in 0 until files.size()
+                index in
+                0 until files.size()
             ) {
 
                 val item =
-                    files.getMap(index)
+                    files.getMap(
+                        index
+                    )
                         ?: continue
+
 
                 val uriString =
-                    item.getString("uri")
+                    item.getString(
+                        "uri"
+                    )
                         ?: continue
 
+
                 val name =
-                    item.getString("name")
+                    item.getString(
+                        "name"
+                    )
                         ?: "Unknown File"
 
+
                 val mimeType =
-                    item.getString("mimeType")
+                    item.getString(
+                        "mimeType"
+                    )
+
 
                 val size =
                     if (
-                        item.hasKey("size") &&
-                        !item.isNull("size")
+                        item.hasKey(
+                            "size"
+                        ) &&
+                        !item.isNull(
+                            "size"
+                        )
                     ) {
-                        item.getDouble("size").toLong()
+
+                        item.getDouble(
+                            "size"
+                        ).toLong()
+
                     } else {
+
                         0L
                     }
 
+
                 sharedFiles.add(
                     SharedFile(
-                        uri = Uri.parse(uriString),
-                        name = name,
-                        mimeType = mimeType,
-                        size = size
+                        uri =
+                            Uri.parse(
+                                uriString
+                            ),
+
+                        name =
+                            name,
+
+                        mimeType =
+                            mimeType,
+
+                        size =
+                            size
                     )
                 )
             }
 
-            if (sharedFiles.isEmpty()) {
+
+            if (
+                sharedFiles.isEmpty()
+            ) {
+
                 promise.reject(
                     "NO_VALID_FILES",
                     "No valid files were provided."
                 )
+
                 return
             }
 
+
             server?.stop()
+
 
             val newServer =
                 LocalHttpServer(
-                    reactContext.contentResolver
+                    reactContext
+                        .contentResolver
                 )
 
-            newServer.setFiles(sharedFiles)
+
+            newServer.setFiles(
+                sharedFiles
+            )
+
 
             val port =
                 newServer.start()
 
-            server = newServer
+
+            server =
+                newServer
+
 
             val ip =
-                NetworkUtils.getLocalIpAddress()
+                NetworkUtils
+                    .getLocalIpAddress()
 
-            if (ip == null) {
+
+            if (
+                ip == null
+            ) {
+
                 newServer.stop()
+
                 server = null
+
 
                 promise.reject(
                     "NO_NETWORK",
@@ -113,28 +184,37 @@ class DropLinkModule(
                 return
             }
 
+
             val url =
                 "http://$ip:$port"
 
+
             val result =
-                com.facebook.react.bridge.Arguments.createMap()
+                Arguments.createMap()
+
 
             result.putString(
                 "ip",
                 ip
             )
 
+
             result.putInt(
                 "port",
                 port
             )
+
 
             result.putString(
                 "url",
                 url
             )
 
-            promise.resolve(result)
+
+            promise.resolve(
+                result
+            )
+
 
         } catch (e: Exception) {
 
@@ -145,6 +225,105 @@ class DropLinkModule(
             )
         }
     }
+
+
+    // =========================================================
+    // GET RECEIVED FILES
+    // =========================================================
+
+    @ReactMethod
+    fun getReceivedFiles(
+        promise: Promise
+    ) {
+
+        try {
+
+            val currentServer =
+                server
+
+
+            if (
+                currentServer == null
+            ) {
+
+                promise.resolve(
+                    Arguments.createArray()
+                )
+
+                return
+            }
+
+
+            val files =
+                currentServer
+                    .getReceivedFiles()
+
+
+            val result =
+                Arguments.createArray()
+
+
+            files.forEach { file ->
+
+                val map =
+                    Arguments.createMap()
+
+
+                map.putString(
+                    "name",
+                    file.name
+                )
+
+
+                map.putString(
+                    "mimeType",
+                    file.mimeType
+                )
+
+
+                map.putDouble(
+                    "size",
+                    file.size.toDouble()
+                )
+
+
+                map.putString(
+                    "path",
+                    file.path
+                )
+
+
+                map.putString(
+                    "category",
+                    file.category
+                )
+
+
+                result.pushMap(
+                    map
+                )
+            }
+
+
+            promise.resolve(
+                result
+            )
+
+
+        } catch (e: Exception) {
+
+            promise.reject(
+                "RECEIVED_FILES_ERROR",
+                e.message,
+                e
+            )
+        }
+    }
+
+
+    // =========================================================
+    // STOP SERVER
+    // =========================================================
 
     @ReactMethod
     fun stopServer(
@@ -157,7 +336,11 @@ class DropLinkModule(
 
             server = null
 
-            promise.resolve(true)
+
+            promise.resolve(
+                true
+            )
+
 
         } catch (e: Exception) {
 
@@ -169,6 +352,11 @@ class DropLinkModule(
         }
     }
 
+
+    // =========================================================
+    // LOCAL IP
+    // =========================================================
+
     @ReactMethod
     fun getLocalIp(
         promise: Promise
@@ -177,17 +365,27 @@ class DropLinkModule(
         try {
 
             val ip =
-                NetworkUtils.getLocalIpAddress()
+                NetworkUtils
+                    .getLocalIpAddress()
 
-            if (ip == null) {
+
+            if (
+                ip == null
+            ) {
+
                 promise.reject(
                     "NO_NETWORK",
                     "Unable to determine local IP address."
                 )
+
                 return
             }
 
-            promise.resolve(ip)
+
+            promise.resolve(
+                ip
+            )
+
 
         } catch (e: Exception) {
 
@@ -199,6 +397,78 @@ class DropLinkModule(
         }
     }
 
+
+    // =========================================================
+    // NETWORK INFO
+    // =========================================================
+
+    @ReactMethod
+    fun getNetworkInfo(
+        promise: Promise
+    ) {
+
+        try {
+
+            val info =
+                NetworkUtils
+                    .getNetworkInfo(
+                        reactContext
+                    )
+
+
+            val result =
+                Arguments.createMap()
+
+
+            result.putBoolean(
+                "connected",
+                info.connected
+            )
+
+
+            if (
+                info.ip != null
+            ) {
+
+                result.putString(
+                    "ip",
+                    info.ip
+                )
+
+            } else {
+
+                result.putNull(
+                    "ip"
+                )
+            }
+
+
+            result.putString(
+                "type",
+                info.type
+            )
+
+
+            promise.resolve(
+                result
+            )
+
+
+        } catch (e: Exception) {
+
+            promise.reject(
+                "NETWORK_INFO_ERROR",
+                e.message,
+                e
+            )
+        }
+    }
+
+
+    // =========================================================
+    // INVALIDATE
+    // =========================================================
+
     override fun invalidate() {
 
         server?.stop()
@@ -207,54 +477,4 @@ class DropLinkModule(
 
         super.invalidate()
     }
-    @ReactMethod
-fun getNetworkInfo(
-    promise: Promise
-) {
-
-    try {
-
-        val info =
-            NetworkUtils.getNetworkInfo(
-                reactContext
-            )
-
-        val result =
-            com.facebook.react.bridge
-                .Arguments
-                .createMap()
-
-        result.putBoolean(
-            "connected",
-            info.connected
-        )
-
-        if (info.ip != null) {
-
-            result.putString(
-                "ip",
-                info.ip
-            )
-
-        } else {
-
-            result.putNull("ip")
-        }
-
-        result.putString(
-            "type",
-            info.type
-        )
-
-        promise.resolve(result)
-
-    } catch (e: Exception) {
-
-        promise.reject(
-            "NETWORK_INFO_ERROR",
-            e.message,
-            e
-        )
-    }
-}
 }

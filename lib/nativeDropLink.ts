@@ -5,7 +5,7 @@ import {
 
 
 // =========================================================
-// LOCAL SHARE FILE
+// SHARE FILE
 // =========================================================
 
 export type ShareFile = {
@@ -21,7 +21,7 @@ export type ShareFile = {
 
 
 // =========================================================
-// LOCAL SERVER INFO
+// SERVER INFO
 // =========================================================
 
 export type ServerInfo = {
@@ -49,43 +49,49 @@ export type NetworkInfo = {
 
 
 // =========================================================
-// NATIVE LOCAL SHARE MODULE
+// RECEIVED FILE
 // =========================================================
 
-type DropLinkNativeModule = {
+export type ReceivedFile = {
 
-  /*
-   * Start Local Share server.
-   *
-   * The selected files remain on Android
-   * and are streamed by LocalHttpServer.
-   */
-  startServer(
-    files: ShareFile[]
-  ): Promise<ServerInfo>;
+  name: string;
 
+  mimeType: string;
 
-  /*
-   * Stop Local Share server.
-   */
-  stopServer(): Promise<boolean>;
+  size: number;
 
+  path: string;
 
-  /*
-   * Get Local Share IP.
-   */
-  getLocalIp(): Promise<string>;
-
-
-  /*
-   * Get network information.
-   */
-  getNetworkInfo(): Promise<NetworkInfo>;
+  category: string;
 };
 
 
 // =========================================================
 // NATIVE MODULE
+// =========================================================
+
+type DropLinkNativeModule = {
+
+  startServer(
+    files: ShareFile[]
+  ): Promise<ServerInfo>;
+
+
+  stopServer(): Promise<boolean>;
+
+
+  getLocalIp(): Promise<string>;
+
+
+  getNetworkInfo(): Promise<NetworkInfo>;
+
+
+  getReceivedFiles(): Promise<ReceivedFile[]>;
+};
+
+
+// =========================================================
+// MODULE
 // =========================================================
 
 const DropLink =
@@ -120,7 +126,7 @@ function checkAndroid() {
 
 
 // =========================================================
-// START LOCAL SERVER
+// START
 // =========================================================
 
 export async function startLocalServer(
@@ -131,16 +137,7 @@ export async function startLocalServer(
 
 
   if (
-    !Array.isArray(files)
-  ) {
-
-    throw new Error(
-      'Invalid files list.'
-    );
-  }
-
-
-  if (
+    !Array.isArray(files) ||
     files.length === 0
   ) {
 
@@ -157,7 +154,7 @@ export async function startLocalServer(
 
 
 // =========================================================
-// STOP LOCAL SERVER
+// STOP
 // =========================================================
 
 export async function stopLocalServer(): Promise<boolean> {
@@ -170,7 +167,7 @@ export async function stopLocalServer(): Promise<boolean> {
 
 
 // =========================================================
-// GET LOCAL IP
+// LOCAL IP
 // =========================================================
 
 export async function getLocalIp(): Promise<string> {
@@ -183,7 +180,7 @@ export async function getLocalIp(): Promise<string> {
 
 
 // =========================================================
-// GET NETWORK INFO
+// NETWORK
 // =========================================================
 
 export async function getNetworkInfo(): Promise<NetworkInfo> {
@@ -192,4 +189,17 @@ export async function getNetworkInfo(): Promise<NetworkInfo> {
 
 
   return DropLink.getNetworkInfo();
+}
+
+
+// =========================================================
+// RECEIVED FILES
+// =========================================================
+
+export async function getReceivedFiles(): Promise<ReceivedFile[]> {
+
+  checkAndroid();
+
+
+  return DropLink.getReceivedFiles();
 }

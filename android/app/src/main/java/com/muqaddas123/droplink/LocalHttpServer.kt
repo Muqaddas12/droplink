@@ -1,8 +1,8 @@
 package com.muqaddas123.droplink
 
 import android.content.ContentResolver
+import android.net.Uri
 import android.os.Environment
-import android.webkit.MimeTypeMap
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -10,13 +10,23 @@ import java.io.FileOutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
+import java.net.URLEncoder
+import java.util.Collections
 import java.util.concurrent.Executors
 
 data class SharedFile(
-    val uri: android.net.Uri,
+    val uri: Uri,
     val name: String,
     val mimeType: String?,
     val size: Long
+)
+
+data class ReceivedFile(
+    val name: String,
+    val mimeType: String,
+    val size: Long,
+    val path: String,
+    val category: String
 )
 
 class LocalHttpServer(
@@ -32,18 +42,48 @@ class LocalHttpServer(
     private var running = false
 
     @Volatile
-    private var sharedFiles: List<SharedFile> = emptyList()
+    private var sharedFiles: List<SharedFile> =
+        emptyList()
+
+    private val receivedFiles =
+        Collections.synchronizedList(
+            mutableListOf<ReceivedFile>()
+        )
 
     var port: Int = 0
         private set
 
-    fun setFiles(files: List<SharedFile>) {
+
+    // =========================================================
+    // FILES SHARED BY USER A
+    // =========================================================
+
+    fun setFiles(
+        files: List<SharedFile>
+    ) {
+
         sharedFiles = files
     }
 
-    // ---------------------------------------------------------
-    // START SERVER
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // RECEIVED FILES
+    // =========================================================
+
+    fun getReceivedFiles(): List<ReceivedFile> {
+
+        synchronized(
+            receivedFiles
+        ) {
+
+            return receivedFiles.toList()
+        }
+    }
+
+
+    // =========================================================
+    // START
+    // =========================================================
 
     fun start(): Int {
 
@@ -51,9 +91,11 @@ class LocalHttpServer(
             return port
         }
 
-        serverSocket = ServerSocket(0)
+        serverSocket =
+            ServerSocket(0)
 
-        port = serverSocket!!.localPort
+        port =
+            serverSocket!!.localPort
 
         running = true
 
@@ -67,49 +109,78 @@ class LocalHttpServer(
                         serverSocket!!.accept()
 
                     /*
-                     * Every browser connection gets
+                     * Every connection gets
                      * its own worker.
                      *
-                     * Therefore download and upload
-                     * can happen simultaneously.
+                     * This allows:
+                     *
+                     * Browser A -> download
+                     * Browser B -> upload
+                     *
+                     * at the same time.
                      */
                     executor.execute {
-                        handleClient(socket)
+
+                        handleClient(
+                            socket
+                        )
                     }
 
                 } catch (e: Exception) {
 
                     if (running) {
-                        e.printStackTrace()
+
+                        android.util.Log.e(
+                            "DropLink",
+                            "ACCEPT ERROR",
+                            e
+                        )
                     }
                 }
             }
         }
 
+        android.util.Log.d(
+            "DropLink",
+            "SERVER STARTED ON PORT $port"
+        )
+
         return port
     }
 
-    // ---------------------------------------------------------
-    // STOP SERVER
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // STOP
+    // =========================================================
 
     fun stop() {
 
         running = false
 
         try {
+
             serverSocket?.close()
+
         } catch (_: Exception) {
         }
 
         serverSocket = null
 
-        sharedFiles = emptyList()
+        sharedFiles =
+            emptyList()
+
+        /*
+         * Don't delete receivedFiles here.
+         *
+         * This lets the React Native screen
+         * read the files after the transfer.
+         */
     }
 
-    // ---------------------------------------------------------
-    // CLIENT HANDLER
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // CLIENT
+    // =========================================================
 
     private fun handleClient(
         socket: Socket
@@ -129,26 +200,26 @@ class LocalHttpServer(
                         socket.getOutputStream()
                     )
 
-                /*
-                 * Read HTTP headers only.
-                 *
-                 * IMPORTANT:
-                 * Do NOT read the request body here.
-                 * POST upload body must be streamed directly
-                 * into the destination file.
-                 */
                 val request =
-                    readRequestHeaders(input)
+                    readRequestHeaders(
+                        input
+                    )
                         ?: return
 
                 val requestLine =
                     request
-                        .substringBefore("\r\n")
+                        .substringBefore(
+                            "\r\n"
+                        )
 
                 val parts =
-                    requestLine.split(" ")
+                    requestLine.split(
+                        " "
+                    )
 
-                if (parts.size < 2) {
+                if (
+                    parts.size < 2
+                ) {
                     return
                 }
 
@@ -160,21 +231,28 @@ class LocalHttpServer(
 
                 val decodedPath =
                     try {
+
                         URLDecoder.decode(
                             rawPath,
                             "UTF-8"
                         )
+
                     } catch (_: Exception) {
+
                         rawPath
                     }
 
                 android.util.Log.d(
                     "DropLink",
-                    "HTTP $method $decodedPath"
+                    "$method $decodedPath"
                 )
+
 
                 when {
 
+                    /*
+                     * Browser home page
+                     */
                     method == "GET" &&
                         (
                             decodedPath == "/" ||
@@ -186,6 +264,10 @@ class LocalHttpServer(
                         )
                     }
 
+
+                    /*
+                     * Download
+                     */
                     method == "GET" &&
                         decodedPath.startsWith(
                             "/download/"
@@ -197,8 +279,27 @@ class LocalHttpServer(
                         )
                     }
 
+
+                    /*
+                     * Browser asks for
+                     * received files.
+                     */
+                    method == "GET" &&
+                        decodedPath ==
+                        "/received" -> {
+
+                        sendReceivedFilesJson(
+                            output
+                        )
+                    }
+
+
+                    /*
+                     * Upload
+                     */
                     method == "POST" &&
-                        decodedPath == "/upload" -> {
+                        decodedPath ==
+                        "/upload" -> {
 
                         handleUpload(
                             input,
@@ -206,6 +307,7 @@ class LocalHttpServer(
                             request
                         )
                     }
+
 
                     else -> {
 
@@ -231,9 +333,10 @@ class LocalHttpServer(
         }
     }
 
-    // ---------------------------------------------------------
-    // READ HTTP HEADERS
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // HTTP HEADER READER
+    // =========================================================
 
     private fun readRequestHeaders(
         input: BufferedInputStream
@@ -242,14 +345,18 @@ class LocalHttpServer(
         val builder =
             StringBuilder()
 
-        var previous = -1
+        var previous =
+            -1
 
         while (true) {
 
             val current =
                 input.read()
 
-            if (current == -1) {
+            if (
+                current == -1
+            ) {
+
                 return null
             }
 
@@ -258,8 +365,10 @@ class LocalHttpServer(
             )
 
             if (
-                previous == '\r'.code &&
-                current == '\n'.code
+                previous ==
+                '\r'.code &&
+                current ==
+                '\n'.code
             ) {
 
                 if (
@@ -269,20 +378,23 @@ class LocalHttpServer(
                             "\r\n\r\n"
                         )
                 ) {
+
                     break
                 }
             }
 
-            previous = current
+            previous =
+                current
 
             /*
-             * Prevent malicious/invalid
-             * gigantic HTTP headers.
+             * Prevent enormous
+             * HTTP headers.
              */
             if (
                 builder.length >
                 32 * 1024
             ) {
+
                 return null
             }
         }
@@ -290,9 +402,10 @@ class LocalHttpServer(
         return builder.toString()
     }
 
-    // ---------------------------------------------------------
-    // PARSE HTTP HEADER
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // GET HEADER
+    // =========================================================
 
     private fun getHeader(
         request: String,
@@ -303,13 +416,18 @@ class LocalHttpServer(
             name.lowercase()
 
         return request
-            .split("\r\n")
+            .split(
+                "\r\n"
+            )
             .drop(1)
             .firstOrNull {
 
                 it.substringBefore(
                     ":"
-                ).trim().lowercase() == target
+                )
+                    .trim()
+                    .lowercase() ==
+                    target
             }
             ?.substringAfter(
                 ":",
@@ -318,569 +436,971 @@ class LocalHttpServer(
             ?.trim()
     }
 
-    // ---------------------------------------------------------
-    // BROWSER PAGE
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // INDEX PAGE
+    // =========================================================
 
     private fun sendIndexPage(
         output: BufferedOutputStream
     ) {
-
-        val files =
-            sharedFiles
 
         val html =
             buildString {
 
                 append(
                     """
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
+<!DOCTYPE html>
+<html>
 
-                    <meta
-                        name="viewport"
-                        content="width=device-width, initial-scale=1"
-                    >
+<head>
 
-                    <meta
-                        charset="UTF-8"
-                    >
+<meta
+    charset="UTF-8"
+>
 
-                    <title>DropLink</title>
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+>
 
-                    <style>
+<title>DropLink</title>
 
-                    * {
-                        box-sizing: border-box;
-                    }
+<style>
 
-                    body {
-                        margin: 0;
-                        padding: 20px;
-                        font-family:
-                            Arial,
-                            sans-serif;
-                        background:
-                            #f5f7fb;
-                        color:
-                            #111827;
-                    }
+* {
+    box-sizing: border-box;
+}
 
-                    .container {
-                        max-width:
-                            700px;
-                        margin:
-                            auto;
-                    }
+body {
+    margin: 0;
+    padding: 20px;
+    font-family: Arial, sans-serif;
+    background: #f5f7fb;
+    color: #111827;
+}
 
-                    .header {
-                        background:
-                            #2563eb;
-                        color:
-                            white;
-                        padding:
-                            28px;
-                        border-radius:
-                            22px;
-                        margin-bottom:
-                            20px;
-                    }
+.container {
+    max-width: 720px;
+    margin: auto;
+}
 
-                    .header h1 {
-                        margin:
-                            0;
-                        font-size:
-                            28px;
-                    }
+.header {
+    background: #2563eb;
+    color: white;
+    padding: 28px;
+    border-radius: 22px;
+    margin-bottom: 20px;
+}
 
-                    .header p {
-                        margin-top:
-                            8px;
-                        opacity:
-                            .9;
-                    }
+.header h1 {
+    margin: 0;
+    font-size: 28px;
+}
 
-                    .card {
-                        background:
-                            white;
-                        border-radius:
-                            18px;
-                        padding:
-                            20px;
-                        margin-bottom:
-                            16px;
-                        box-shadow:
-                            0 2px 10px
-                            rgba(0,0,0,.05);
-                    }
+.header p {
+    margin-top: 8px;
+    opacity: .9;
+}
 
-                    .card-title {
-                        font-size:
-                            19px;
-                        font-weight:
-                            800;
-                        margin-bottom:
-                            14px;
-                    }
+.card {
+    background: white;
+    border-radius: 18px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow:
+        0 2px 10px rgba(0,0,0,.05);
+}
 
-                    .file {
-                        background:
-                            #f8fafc;
-                        border-radius:
-                            14px;
-                        padding:
-                            15px;
-                        margin-bottom:
-                            10px;
-                    }
+.card-title {
+    font-size: 19px;
+    font-weight: 800;
+    margin-bottom: 14px;
+}
 
-                    .file-name {
-                        font-weight:
-                            bold;
-                        word-break:
-                            break-word;
-                    }
+.file {
+    background: #f8fafc;
+    border-radius: 14px;
+    padding: 15px;
+    margin-bottom: 10px;
+}
 
-                    .file-size {
-                        color:
-                            #6b7280;
-                        margin-top:
-                            5px;
-                        margin-bottom:
-                            10px;
-                    }
+.file-name {
+    font-weight: bold;
+    word-break: break-word;
+}
 
-                    .download {
-                        display:
-                            inline-block;
-                        padding:
-                            10px 16px;
-                        border-radius:
-                            10px;
-                        background:
-                            #2563eb;
-                        color:
-                            white;
-                        text-decoration:
-                            none;
-                        font-weight:
-                            600;
-                    }
+.file-size {
+    color: #6b7280;
+    margin-top: 5px;
+    margin-bottom: 10px;
+}
 
-                    input[type=file] {
-                        width:
-                            100%;
-                        padding:
-                            12px;
-                        border:
-                            1px solid
-                            #d1d5db;
-                        border-radius:
-                            12px;
-                        background:
-                            white;
-                    }
+.download {
+    display: inline-block;
+    padding: 10px 16px;
+    border-radius: 10px;
+    background: #2563eb;
+    color: white;
+    text-decoration: none;
+    font-weight: 600;
+}
 
-                    .upload-button {
-                        width:
-                            100%;
-                        margin-top:
-                            12px;
-                        padding:
-                            13px;
-                        border:
-                            none;
-                        border-radius:
-                            12px;
-                        background:
-                            #10b981;
-                        color:
-                            white;
-                        font-size:
-                            15px;
-                        font-weight:
-                            800;
-                        cursor:
-                            pointer;
-                    }
+input[type=file] {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 12px;
+    background: white;
+}
 
-                    .upload-button:disabled {
-                        opacity:
-                            .6;
-                    }
+.upload-button {
+    width: 100%;
+    margin-top: 12px;
+    padding: 13px;
+    border: none;
+    border-radius: 12px;
+    background: #10b981;
+    color: white;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+}
 
-                    .status {
-                        margin-top:
-                            14px;
-                        padding:
-                            12px;
-                        border-radius:
-                            10px;
-                        background:
-                            #f3f4f6;
-                        font-size:
-                            13px;
-                    }
+.upload-button:disabled {
+    opacity: .6;
+}
 
-                    .progress {
-                        width:
-                            100%;
-                        height:
-                            10px;
-                        margin-top:
-                            10px;
-                        border-radius:
-                            10px;
-                        background:
-                            #e5e7eb;
-                        overflow:
-                            hidden;
-                    }
+.status {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: 10px;
+    background: #f3f4f6;
+    font-size: 13px;
+}
 
-                    .progress-bar {
-                        height:
-                            100%;
-                        width:
-                            0%;
-                        background:
-                            #10b981;
-                        transition:
-                            width .1s linear;
-                    }
+.progress {
+    width: 100%;
+    height: 10px;
+    margin-top: 10px;
+    border-radius: 10px;
+    background: #e5e7eb;
+    overflow: hidden;
+}
 
-                    </style>
+.progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #10b981;
+    transition: width .1s linear;
+}
 
-                    </head>
+.received-file {
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 10px;
+}
 
-                    <body>
+.received-category {
+    display: inline-block;
+    margin-top: 7px;
+    padding: 4px 8px;
+    border-radius: 7px;
+    background: #d1fae5;
+    color: #047857;
+    font-size: 11px;
+    font-weight: bold;
+}
 
-                    <div class="container">
+.empty {
+    color: #6b7280;
+    font-size: 13px;
+}
 
-                    <div class="header">
+</style>
 
-                        <h1>
-                            DropLink
-                        </h1>
+</head>
 
-                        <p>
-                            ${files.size}
-                            file(s) available
-                        </p>
+<body>
 
-                    </div>
+<div class="container">
 
-                    <div class="card">
+<div class="header">
 
-                        <div class="card-title">
-                            Send files to this device
-                        </div>
+<h1>DropLink</h1>
 
-                        <input
-                            id="files"
-                            type="file"
-                            multiple
-                        >
+<p>
+Send and receive files directly.
+</p>
 
-                        <button
-                            id="uploadButton"
-                            class="upload-button"
-                            onclick="uploadFiles()"
-                        >
-                            Upload Files
-                        </button>
+</div>
 
-                        <div
-                            id="status"
-                            class="status"
-                        >
-                            Select files to upload.
-                        </div>
 
-                    </div>
+<div class="card">
 
-                    <div class="card">
+<div class="card-title">
+Send files to this device
+</div>
 
-                        <div class="card-title">
-                            Files available
-                        </div>
-                    """.trimIndent()
+<input
+    id="files"
+    type="file"
+    multiple
+>
+
+<button
+    id="uploadButton"
+    class="upload-button"
+    onclick="uploadFiles()"
+>
+Upload Files
+</button>
+
+<div
+    id="status"
+    class="status"
+>
+Select files to upload.
+</div>
+
+</div>
+
+
+<div class="card">
+
+<div class="card-title">
+Files available from this device
+</div>
+
+"""
                 )
 
-                if (files.isEmpty()) {
+                if (
+                    sharedFiles.isEmpty()
+                ) {
 
                     append(
                         """
-                        <div class="status">
-                            No files available.
-                        </div>
-                        """.trimIndent()
+<div class="empty">
+No shared files.
+</div>
+"""
                     )
 
                 } else {
 
-                    files.forEachIndexed { index, file ->
+                    sharedFiles
+                        .forEachIndexed {
+                            index,
+                            file ->
 
-                        val encodedName =
-                            android.net.Uri.encode(
-                                file.name
+                            val encodedName =
+                                URLEncoder.encode(
+                                    file.name,
+                                    "UTF-8"
+                                )
+
+                            append(
+                                """
+<div class="file">
+
+<div class="file-name">
+${escapeHtml(file.name)}
+</div>
+
+<div class="file-size">
+${formatSize(file.size)}
+</div>
+
+<a
+    class="download"
+    href="/download/$index/$encodedName"
+>
+Download
+</a>
+
+</div>
+"""
                             )
-
-                        append(
-                            """
-                            <div class="file">
-
-                                <div
-                                    class="file-name"
-                                >
-                                    ${escapeHtml(file.name)}
-                                </div>
-
-                                <div
-                                    class="file-size"
-                                >
-                                    ${formatSize(file.size)}
-                                </div>
-
-                                <a
-                                    class="download"
-                                    href="/download/$index/$encodedName"
-                                >
-                                    Download
-                                </a>
-
-                            </div>
-                            """.trimIndent()
-                        )
-                    }
+                        }
                 }
+
 
                 append(
                     """
 
-                    </div>
+</div>
 
-                    </div>
 
-                    <script>
+<div class="card">
 
-                    function formatSize(bytes) {
+<div class="card-title">
+Files received by this device
+</div>
 
-                        if (bytes < 1024)
-                            return bytes + " B";
+<div id="receivedFiles">
 
-                        if (bytes < 1024 * 1024)
-                            return
-                                (bytes / 1024)
-                                .toFixed(1) + " KB";
+<div class="empty">
+Checking received files...
+</div>
 
-                        if (bytes < 1024 * 1024 * 1024)
-                            return
-                                (bytes / (1024 * 1024))
-                                .toFixed(1) + " MB";
+</div>
 
-                        return
-                            (bytes /
-                                (1024 * 1024 * 1024))
-                            .toFixed(2) + " GB";
-                    }
+</div>
 
-                    function uploadFiles() {
 
-                        const input =
-                            document.getElementById(
-                                "files"
-                            );
+</div>
 
-                        const button =
-                            document.getElementById(
-                                "uploadButton"
-                            );
 
-                        const status =
-                            document.getElementById(
-                                "status"
-                            );
+<script>
 
-                        const files =
-                            input.files;
+function formatSize(bytes) {
 
-                        if (!files.length) {
+    bytes = Number(bytes) || 0;
 
-                            status.innerText =
-                                "Please select a file.";
+    if (bytes < 1024) {
+        return bytes.toFixed(0) + " B";
+    }
 
-                            return;
-                        }
+    if (bytes < 1024 * 1024) {
+        return (
+            bytes / 1024
+        ).toFixed(1) + " KB";
+    }
 
-                        button.disabled = true;
+    if (
+        bytes <
+        1024 * 1024 * 1024
+    ) {
 
-                        uploadNext(
-                            files,
-                            0,
-                            button,
-                            status
-                        );
-                    }
+        return (
+            bytes /
+            (1024 * 1024)
+        ).toFixed(1) + " MB";
+    }
 
-                    function uploadNext(
-                        files,
-                        index,
-                        button,
-                        status
-                    ) {
+    return (
+        bytes /
+        (1024 * 1024 * 1024)
+    ).toFixed(2) + " GB";
+}
 
-                        if (
-                            index >=
-                            files.length
-                        ) {
 
-                            status.innerText =
-                                "All files uploaded successfully.";
+function formatSpeed(
+    bytesPerSecond
+) {
 
-                            button.disabled =
-                                false;
+    return (
+        formatSize(
+            bytesPerSecond
+        ) + "/s"
+    );
+}
 
-                            return;
-                        }
 
-                        const file =
-                            files[index];
+function formatTime(
+    seconds
+) {
 
-                        status.innerHTML =
-                            "Uploading <b>" +
-                            file.name +
-                            "</b><br>" +
-                            formatSize(0) +
-                            " / " +
-                            formatSize(file.size) +
-                            "<div class='progress'>" +
-                            "<div id='progressBar' " +
-                            "class='progress-bar'>" +
-                            "</div></div>";
+    seconds =
+        Math.max(
+            0,
+            Math.floor(
+                Number(seconds) || 0
+            )
+        );
 
-                        const xhr =
-                            new XMLHttpRequest();
+    const hours =
+        Math.floor(
+            seconds / 3600
+        );
 
-                        xhr.open(
-                            "POST",
-                            "/upload",
-                            true
-                        );
+    const minutes =
+        Math.floor(
+            (seconds % 3600) / 60
+        );
 
-                        xhr.setRequestHeader(
-                            "X-File-Name",
-                            encodeURIComponent(
+    const secs =
+        seconds % 60;
+
+    if (hours > 0) {
+
+        return (
+            String(hours).padStart(2, "0") +
+            ":" +
+            String(minutes).padStart(2, "0") +
+            ":" +
+            String(secs).padStart(2, "0")
+        );
+    }
+
+    return (
+        String(minutes).padStart(2, "0") +
+        ":" +
+        String(secs).padStart(2, "0")
+    );
+}
+
+
+function uploadFiles() {
+
+    const input =
+        document.getElementById(
+            "files"
+        );
+
+    const button =
+        document.getElementById(
+            "uploadButton"
+        );
+
+    const status =
+        document.getElementById(
+            "status"
+        );
+
+    const files =
+        input.files;
+
+    if (
+        !files ||
+        files.length === 0
+    ) {
+
+        status.innerText =
+            "Please select a file.";
+
+        return;
+    }
+
+    button.disabled = true;
+
+    uploadNext(
+        files,
+        0,
+        button,
+        status
+    );
+}
+
+
+function uploadNext(
+    files,
+    index,
+    button,
+    status
+) {
+
+    if (
+        index >=
+        files.length
+    ) {
+
+        status.innerText =
+            "✓ All files uploaded successfully.";
+
+        button.disabled =
+            false;
+
+        loadReceivedFiles();
+
+        return;
+    }
+
+
+    const file =
+        files[index];
+
+
+    const total =
+        Number(file.size) || 0;
+
+
+    const startedAt =
+        Date.now();
+
+
+    status.innerHTML =
+        "Uploading <b>" +
+        escapeHtmlJs(
+            file.name
+        ) +
+        "</b>" +
+
+        "<br><br>" +
+
+        "<span id='uploadAmount'>" +
+        "0 B / " +
+        formatSize(total) +
+        "</span>" +
+
+        "<br>" +
+
+        "<span id='uploadPercent'>" +
+        "0.0%" +
+        "</span>" +
+
+        " · " +
+
+        "<span id='uploadSpeed'>" +
+        "0 B/s" +
+        "</span>" +
+
+        " · ETA " +
+
+        "<span id='uploadEta'>" +
+        "--:--" +
+        "</span>" +
+
+        "<div class='progress'>" +
+
+        "<div " +
+        "id='progressBar' " +
+        "class='progress-bar'>" +
+
+        "</div>" +
+
+        "</div>";
+
+
+    const xhr =
+        new XMLHttpRequest();
+
+
+    xhr.open(
+        "POST",
+        "/upload",
+        true
+    );
+
+
+    xhr.setRequestHeader(
+        "X-File-Name",
+        encodeURIComponent(
+            file.name
+        )
+    );
+
+
+    xhr.setRequestHeader(
+        "X-File-Type",
+        file.type ||
+        "application/octet-stream"
+    );
+
+
+    xhr.setRequestHeader(
+        "X-File-Size",
+        String(total)
+    );
+
+
+    xhr.upload.onprogress =
+        function(event) {
+
+            /*
+             * IMPORTANT:
+             *
+             * Do NOT use event.total.
+             *
+             * We already know the real
+             * file size from file.size.
+             */
+            const loaded =
+                Number(
+                    event.loaded
+                ) || 0;
+
+
+            const safeTotal =
+                total;
+
+
+            let percent =
+                0;
+
+
+            if (
+                safeTotal > 0
+            ) {
+
+                percent =
+                    (
+                        loaded /
+                        safeTotal
+                    ) * 100;
+
+            } else {
+
+                percent =
+                    0;
+            }
+
+
+            percent =
+                Math.min(
+                    100,
+                    Math.max(
+                        0,
+                        percent
+                    )
+                );
+
+
+            const elapsedSeconds =
+                Math.max(
+                    0.001,
+                    (
+                        Date.now() -
+                        startedAt
+                    ) / 1000
+                );
+
+
+            const speed =
+                loaded /
+                elapsedSeconds;
+
+
+            const remaining =
+                Math.max(
+                    0,
+                    safeTotal -
+                    loaded
+                );
+
+
+            let eta =
+                0;
+
+
+            if (
+                speed > 0
+            ) {
+
+                eta =
+                    remaining /
+                    speed;
+            }
+
+
+            const amount =
+                document.getElementById(
+                    "uploadAmount"
+                );
+
+
+            const percentElement =
+                document.getElementById(
+                    "uploadPercent"
+                );
+
+
+            const speedElement =
+                document.getElementById(
+                    "uploadSpeed"
+                );
+
+
+            const etaElement =
+                document.getElementById(
+                    "uploadEta"
+                );
+
+
+            const bar =
+                document.getElementById(
+                    "progressBar"
+                );
+
+
+            if (amount) {
+
+                amount.innerText =
+                    formatSize(
+                        loaded
+                    ) +
+                    " / " +
+                    formatSize(
+                        safeTotal
+                    );
+            }
+
+
+            if (
+                percentElement
+            ) {
+
+                percentElement.innerText =
+                    percent.toFixed(
+                        1
+                    ) +
+                    "%";
+            }
+
+
+            if (
+                speedElement
+            ) {
+
+                speedElement.innerText =
+                    formatSpeed(
+                        speed
+                    );
+            }
+
+
+            if (
+                etaElement
+            ) {
+
+                etaElement.innerText =
+                    speed > 0
+                        ? formatTime(
+                            eta
+                        )
+                        : "--:--";
+            }
+
+
+            if (bar) {
+
+                bar.style.width =
+                    percent +
+                    "%";
+            }
+        };
+
+
+    xhr.onload =
+        function() {
+
+            if (
+                xhr.status >= 200 &&
+                xhr.status < 300
+            ) {
+
+                status.innerHTML =
+                    "✓ <b>" +
+                    escapeHtmlJs(
+                        file.name
+                    ) +
+                    "</b>" +
+                    "<br>" +
+                    formatSize(
+                        total
+                    ) +
+                    " uploaded successfully.";
+
+
+                loadReceivedFiles();
+
+
+                /*
+                 * Start next file.
+                 */
+                uploadNext(
+                    files,
+                    index + 1,
+                    button,
+                    status
+                );
+
+            } else {
+
+                status.innerText =
+                    "✕ Upload failed: " +
+                    file.name +
+                    " (" +
+                    xhr.status +
+                    ")";
+
+                button.disabled =
+                    false;
+            }
+        };
+
+
+    xhr.onerror =
+        function() {
+
+            status.innerText =
+                "✕ Network error while uploading " +
+                file.name;
+
+            button.disabled =
+                false;
+        };
+
+
+    xhr.onabort =
+        function() {
+
+            status.innerText =
+                "Upload cancelled: " +
+                file.name;
+
+            button.disabled =
+                false;
+        };
+
+
+    xhr.send(
+        file
+    );
+}
+
+
+function escapeHtmlJs(
+    value
+) {
+
+    return String(value)
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+        .replace(
+            /</g,
+            "&lt;"
+        )
+        .replace(
+            />/g,
+            "&gt;"
+        )
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+        .replace(
+            /'/g,
+            "&#039;"
+        );
+}
+
+
+async function loadReceivedFiles() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/received"
+            );
+
+
+        if (
+            !response.ok
+        ) {
+
+            throw new Error(
+                "HTTP " +
+                response.status
+            );
+        }
+
+
+        const files =
+            await response.json();
+
+
+        const container =
+            document.getElementById(
+                "receivedFiles"
+            );
+
+
+        if (!container) {
+            return;
+        }
+
+
+        if (
+            !files ||
+            files.length === 0
+        ) {
+
+            container.innerHTML =
+                "<div class='empty'>" +
+                "No files received yet." +
+                "</div>";
+
+            return;
+        }
+
+
+        container.innerHTML =
+            files
+                .map(
+                    function(file) {
+
+                        return (
+                            "<div class='received-file'>" +
+
+                            "<div class='file-name'>" +
+                            escapeHtmlJs(
                                 file.name
-                            )
+                            ) +
+                            "</div>" +
+
+                            "<div class='file-size'>" +
+                            formatSize(
+                                file.size
+                            ) +
+                            "</div>" +
+
+                            "<span class='received-category'>" +
+                            escapeHtmlJs(
+                                file.category
+                            ) +
+                            "</span>" +
+
+                            "</div>"
                         );
-
-                        xhr.setRequestHeader(
-                            "X-File-Type",
-                            file.type ||
-                            "application/octet-stream"
-                        );
-
-                        xhr.setRequestHeader(
-                            "X-File-Size",
-                            file.size.toString()
-                        );
-
-                        xhr.upload.onprogress =
-                            function(event) {
-
-                                if (!event.lengthComputable)
-                                    return;
-
-                                const percent =
-                                    (event.loaded /
-                                        event.total) *
-                                    100;
-
-                                const bar =
-                                    document.getElementById(
-                                        "progressBar"
-                                    );
-
-                                if (bar) {
-                                    bar.style.width =
-                                        percent + "%";
-                                }
-
-                                status.innerHTML =
-                                    "Uploading <b>" +
-                                    file.name +
-                                    "</b><br>" +
-                                    formatSize(
-                                        event.loaded
-                                    ) +
-                                    " / " +
-                                    formatSize(
-                                        event.total
-                                    ) +
-                                    " (" +
-                                    percent.toFixed(1) +
-                                    "%)" +
-                                    "<div class='progress'>" +
-                                    "<div id='progressBar' " +
-                                    "class='progress-bar' " +
-                                    "style='width:" +
-                                    percent +
-                                    "%'>" +
-                                    "</div></div>";
-                            };
-
-                        xhr.onload =
-                            function() {
-
-                                if (
-                                    xhr.status >= 200 &&
-                                    xhr.status < 300
-                                ) {
-
-                                    status.innerText =
-                                        file.name +
-                                        " uploaded successfully.";
-
-                                    uploadNext(
-                                        files,
-                                        index + 1,
-                                        button,
-                                        status
-                                    );
-
-                                } else {
-
-                                    status.innerText =
-                                        "Upload failed: " +
-                                        file.name;
-
-                                    button.disabled =
-                                        false;
-                                }
-                            };
-
-                        xhr.onerror =
-                            function() {
-
-                                status.innerText =
-                                    "Network error while uploading " +
-                                    file.name;
-
-                                button.disabled =
-                                    false;
-                            };
-
-                        xhr.send(file);
                     }
+                )
+                .join("");
 
-                    </script>
 
-                    </body>
-                    </html>
-                    """.trimIndent()
+    } catch (error) {
+
+        console.log(
+            "Received files error:",
+            error
+        );
+    }
+}
+
+
+/*
+ * Check immediately.
+ */
+loadReceivedFiles();
+
+
+/*
+ * Refresh every 2 seconds.
+ *
+ * This means when another device
+ * uploads a file, the list appears
+ * without restarting the server.
+ */
+setInterval(
+    loadReceivedFiles,
+    2000
+);
+
+</script>
+
+</body>
+
+</html>
+"""
                 )
             }
+
 
         sendResponse(
             output,
@@ -892,9 +1412,10 @@ class LocalHttpServer(
         )
     }
 
-    // ---------------------------------------------------------
-    // FILE DOWNLOAD
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // DOWNLOAD
+    // =========================================================
 
     private fun sendFile(
         output: BufferedOutputStream,
@@ -906,9 +1427,11 @@ class LocalHttpServer(
                 .removePrefix("/")
                 .split("/")
 
+
         if (
             parts.size < 2 ||
-            parts[0] != "download"
+            parts[0] !=
+            "download"
         ) {
 
             sendText(
@@ -920,10 +1443,15 @@ class LocalHttpServer(
             return
         }
 
-        val index =
-            parts[1].toIntOrNull()
 
-        if (index == null) {
+        val index =
+            parts[1]
+                .toIntOrNull()
+
+
+        if (
+            index == null
+        ) {
 
             sendText(
                 output,
@@ -934,10 +1462,17 @@ class LocalHttpServer(
             return
         }
 
-        val file =
-            sharedFiles.getOrNull(index)
 
-        if (file == null) {
+        val file =
+            sharedFiles
+                .getOrNull(
+                    index
+                )
+
+
+        if (
+            file == null
+        ) {
 
             sendText(
                 output,
@@ -948,19 +1483,19 @@ class LocalHttpServer(
             return
         }
 
-        android.util.Log.d(
-            "DropLink",
-            "Download requested: ${file.name}"
-        )
 
         try {
 
             val inputStream =
-                contentResolver.openInputStream(
-                    file.uri
-                )
+                contentResolver
+                    .openInputStream(
+                        file.uri
+                    )
 
-            if (inputStream == null) {
+
+            if (
+                inputStream == null
+            ) {
 
                 sendText(
                     output,
@@ -971,17 +1506,19 @@ class LocalHttpServer(
                 return
             }
 
-            inputStream.use { input ->
 
-                val contentLength =
-                    file.size
+            inputStream.use { input ->
 
                 val mimeType =
                     file.mimeType
                         ?: "application/octet-stream"
 
+
                 val safeName =
-                    escapeHeader(file.name)
+                    escapeHeader(
+                        file.name
+                    )
+
 
                 val header =
                     buildString {
@@ -994,10 +1531,12 @@ class LocalHttpServer(
                             "Content-Type: $mimeType\r\n"
                         )
 
-                        if (contentLength > 0) {
+                        if (
+                            file.size > 0
+                        ) {
 
                             append(
-                                "Content-Length: $contentLength\r\n"
+                                "Content-Length: ${file.size}\r\n"
                             )
                         }
 
@@ -1018,6 +1557,7 @@ class LocalHttpServer(
                         )
                     }
 
+
                 output.write(
                     header.toByteArray(
                         Charsets.UTF_8
@@ -1026,56 +1566,56 @@ class LocalHttpServer(
 
                 output.flush()
 
+
                 val buffer =
                     ByteArray(
                         1024 * 1024
                     )
 
-                var totalBytes =
-                    0L
 
                 while (true) {
 
                     val bytesRead =
-                        input.read(buffer)
+                        input.read(
+                            buffer
+                        )
 
-                    if (bytesRead == -1) {
+
+                    if (
+                        bytesRead ==
+                        -1
+                    ) {
+
                         break
                     }
+
 
                     output.write(
                         buffer,
                         0,
                         bytesRead
                     )
-
-                    totalBytes +=
-                        bytesRead
-
-                    output.flush()
                 }
 
-                android.util.Log.d(
-                    "DropLink",
-                    "Download completed: " +
-                        "${file.name}, " +
-                        "$totalBytes bytes"
-                )
+
+                output.flush()
             }
+
 
         } catch (e: Exception) {
 
             android.util.Log.e(
                 "DropLink",
-                "FILE STREAM ERROR",
+                "DOWNLOAD ERROR",
                 e
             )
         }
     }
 
-    // ---------------------------------------------------------
+
+    // =========================================================
     // UPLOAD
-    // ---------------------------------------------------------
+    // =========================================================
 
     private fun handleUpload(
         input: BufferedInputStream,
@@ -1089,6 +1629,7 @@ class LocalHttpServer(
                 "Content-Length"
             )
                 ?.toLongOrNull()
+
 
         if (
             contentLength == null ||
@@ -1104,17 +1645,21 @@ class LocalHttpServer(
             return
         }
 
+
         val encodedName =
             getHeader(
                 request,
                 "X-File-Name"
             )
 
+
         val requestedName =
             try {
 
                 if (
-                    encodedName != null
+                    encodedName
+                        ?.isNotBlank() ==
+                    true
                 ) {
 
                     URLDecoder.decode(
@@ -1132,6 +1677,7 @@ class LocalHttpServer(
                 "uploaded_file"
             }
 
+
         val mimeType =
             getHeader(
                 request,
@@ -1142,43 +1688,25 @@ class LocalHttpServer(
                 }
                 ?: "application/octet-stream"
 
-        /*
-         * The body of the POST request is the
-         * actual file.
-         *
-         * Therefore we can stream it directly
-         * to disk without storing it in RAM.
-         */
+
         val destination =
             createUploadDestination(
                 requestedName,
                 mimeType
             )
 
-        android.util.Log.d(
-            "DropLink",
-            "UPLOAD START"
-        )
+
+        val category =
+            destination.parentFile
+                ?.name
+                ?: "Others"
+
 
         android.util.Log.d(
             "DropLink",
-            "Name: $requestedName"
+            "UPLOAD START: $requestedName"
         )
 
-        android.util.Log.d(
-            "DropLink",
-            "Type: $mimeType"
-        )
-
-        android.util.Log.d(
-            "DropLink",
-            "Size: $contentLength"
-        )
-
-        android.util.Log.d(
-            "DropLink",
-            "Destination: ${destination.absolutePath}"
-        )
 
         try {
 
@@ -1191,11 +1719,14 @@ class LocalHttpServer(
                         1024 * 1024
                     )
 
+
                 var remaining =
                     contentLength
 
+
                 var received =
                     0L
+
 
                 while (
                     remaining > 0
@@ -1207,6 +1738,7 @@ class LocalHttpServer(
                             remaining
                         ).toInt()
 
+
                     val bytesRead =
                         input.read(
                             buffer,
@@ -1214,13 +1746,17 @@ class LocalHttpServer(
                             requested
                         )
 
+
                     if (
-                        bytesRead == -1
+                        bytesRead ==
+                        -1
                     ) {
+
                         throw Exception(
                             "Connection closed before upload completed."
                         )
                     }
+
 
                     fileOutput.write(
                         buffer,
@@ -1228,27 +1764,66 @@ class LocalHttpServer(
                         bytesRead
                     )
 
+
                     received +=
                         bytesRead
+
 
                     remaining -=
                         bytesRead
                 }
 
+
                 fileOutput.flush()
+
+
+                /*
+                 * Only add the file after the
+                 * entire upload has completed.
+                 */
+                val receivedFile =
+                    ReceivedFile(
+                        name =
+                            destination.name,
+
+                        mimeType =
+                            mimeType,
+
+                        size =
+                            received,
+
+                        path =
+                            destination.absolutePath,
+
+                        category =
+                            category
+                    )
+
+
+                synchronized(
+                    receivedFiles
+                ) {
+
+                    receivedFiles.add(
+                        receivedFile
+                    )
+                }
+
 
                 android.util.Log.d(
                     "DropLink",
                     "UPLOAD COMPLETE: " +
-                        "$received bytes"
+                        destination.absolutePath
                 )
             }
+
 
             sendText(
                 output,
                 "200 OK",
                 "Upload completed: ${destination.name}"
             )
+
 
         } catch (e: Exception) {
 
@@ -1259,11 +1834,13 @@ class LocalHttpServer(
             } catch (_: Exception) {
             }
 
+
             android.util.Log.e(
                 "DropLink",
                 "UPLOAD ERROR",
                 e
             )
+
 
             sendText(
                 output,
@@ -1273,9 +1850,10 @@ class LocalHttpServer(
         }
     }
 
-    // ---------------------------------------------------------
+
+    // =========================================================
     // CREATE UPLOAD DESTINATION
-    // ---------------------------------------------------------
+    // =========================================================
 
     private fun createUploadDestination(
         originalName: String,
@@ -1287,20 +1865,14 @@ class LocalHttpServer(
                 originalName
             )
 
+
         val directoryName =
             getUploadDirectoryName(
                 safeName,
                 mimeType
             )
 
-        /*
-         * Primary location:
-         *
-         * Android public Downloads/DropLink/
-         *
-         * This makes received files visible
-         * to the user and to Android file managers.
-         */
+
         val root =
             File(
                 Environment
@@ -1310,15 +1882,32 @@ class LocalHttpServer(
                 "DropLink"
             )
 
+
         val directory =
             File(
                 root,
                 directoryName
             )
 
-        if (!directory.exists()) {
+
+        if (
+            !directory.exists()
+        ) {
+
             directory.mkdirs()
         }
+
+
+        if (
+            !directory.exists()
+        ) {
+
+            throw Exception(
+                "Unable to create directory: " +
+                    directory.absolutePath
+            )
+        }
+
 
         return createUniqueFile(
             directory,
@@ -1326,9 +1915,10 @@ class LocalHttpServer(
         )
     }
 
-    // ---------------------------------------------------------
-    // FILE CATEGORY
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // CATEGORY
+    // =========================================================
 
     private fun getUploadDirectoryName(
         fileName: String,
@@ -1338,23 +1928,36 @@ class LocalHttpServer(
         val type =
             mimeType.lowercase()
 
+
         if (
-            type.startsWith("image/")
+            type.startsWith(
+                "image/"
+            )
         ) {
+
             return "Images"
         }
 
+
         if (
-            type.startsWith("video/")
+            type.startsWith(
+                "video/"
+            )
         ) {
+
             return "Videos"
         }
 
+
         if (
-            type.startsWith("audio/")
+            type.startsWith(
+                "audio/"
+            )
         ) {
+
             return "Audio"
         }
+
 
         val extension =
             fileName
@@ -1364,7 +1967,10 @@ class LocalHttpServer(
                 )
                 .lowercase()
 
-        return when (extension) {
+
+        return when (
+            extension
+        ) {
 
             "jpg",
             "jpeg",
@@ -1376,6 +1982,7 @@ class LocalHttpServer(
             "heif" ->
                 "Images"
 
+
             "mp4",
             "mkv",
             "avi",
@@ -1385,6 +1992,7 @@ class LocalHttpServer(
             "m4v" ->
                 "Videos"
 
+
             "mp3",
             "wav",
             "aac",
@@ -1392,6 +2000,7 @@ class LocalHttpServer(
             "ogg",
             "m4a" ->
                 "Audio"
+
 
             "pdf",
             "doc",
@@ -1406,6 +2015,7 @@ class LocalHttpServer(
             "odt" ->
                 "Documents"
 
+
             "zip",
             "rar",
             "7z",
@@ -1413,14 +2023,16 @@ class LocalHttpServer(
             "gz" ->
                 "Archives"
 
+
             else ->
                 "Others"
         }
     }
 
-    // ---------------------------------------------------------
-    // UNIQUE FILE
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // UNIQUE NAME
+    // =========================================================
 
     private fun createUniqueFile(
         directory: File,
@@ -1433,12 +2045,19 @@ class LocalHttpServer(
                 originalName
             )
 
-        if (!original.exists()) {
+
+        if (
+            !original.exists()
+        ) {
+
             return original
         }
 
+
         val dotIndex =
-            originalName.lastIndexOf(".")
+            originalName
+                .lastIndexOf(".")
+
 
         val baseName =
             if (
@@ -1456,6 +2075,7 @@ class LocalHttpServer(
                 originalName
             }
 
+
         val extension =
             if (
                 dotIndex > 0
@@ -1471,8 +2091,10 @@ class LocalHttpServer(
                 ""
             }
 
+
         var counter =
             1
+
 
         while (true) {
 
@@ -1482,17 +2104,23 @@ class LocalHttpServer(
                     "$baseName ($counter)$extension"
                 )
 
-            if (!candidate.exists()) {
+
+            if (
+                !candidate.exists()
+            ) {
+
                 return candidate
             }
+
 
             counter++
         }
     }
 
-    // ---------------------------------------------------------
-    // FILE NAME SANITIZATION
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // SANITIZE
+    // =========================================================
 
     private fun sanitizeFileName(
         value: String
@@ -1546,61 +2174,180 @@ class LocalHttpServer(
                 )
                 .trim()
 
-        if (name.isEmpty()) {
-            name = "uploaded_file"
-        }
 
-        /*
-         * Avoid "." and "..".
-         */
         if (
+            name.isEmpty() ||
             name == "." ||
             name == ".."
         ) {
-            name = "uploaded_file"
-        }
-
-        /*
-         * Keep filenames at a reasonable
-         * filesystem-safe length.
-         */
-        if (name.length > 240) {
-
-            val extension =
-                name.substringAfterLast(
-                    ".",
-                    ""
-                )
 
             name =
-                if (
-                    extension.isNotEmpty() &&
-                    name.contains(".")
-                ) {
-
-                    val base =
-                        name.substringBeforeLast(
-                            "."
-                        )
-
-                    base
-                        .take(220) +
-                        "." +
-                        extension
-                            .take(20)
-
-                } else {
-
-                    name.take(240)
-                }
+                "uploaded_file"
         }
+
+
+        if (
+            name.length > 240
+        ) {
+
+            val dot =
+                name.lastIndexOf(".")
+
+
+            if (
+                dot > 0
+            ) {
+
+                val base =
+                    name
+                        .substring(
+                            0,
+                            dot
+                        )
+                        .take(220)
+
+
+                val extension =
+                    name
+                        .substring(
+                            dot
+                        )
+                        .take(20)
+
+
+                name =
+                    base +
+                    extension
+
+            } else {
+
+                name =
+                    name.take(240)
+            }
+        }
+
 
         return name
     }
 
-    // ---------------------------------------------------------
-    // HTTP RESPONSE
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // RECEIVED JSON
+    // =========================================================
+
+    private fun sendReceivedFilesJson(
+        output: BufferedOutputStream
+    ) {
+
+        val files =
+            getReceivedFiles()
+
+
+        val json =
+            buildString {
+
+                append("[")
+
+
+                files.forEachIndexed {
+                    index,
+                    file ->
+
+                    if (
+                        index > 0
+                    ) {
+
+                        append(",")
+                    }
+
+
+                    append("{")
+
+                    append(
+                        "\"name\":\""
+                    )
+
+                    append(
+                        escapeJson(
+                            file.name
+                        )
+                    )
+
+                    append("\",")
+
+
+                    append(
+                        "\"mimeType\":\""
+                    )
+
+                    append(
+                        escapeJson(
+                            file.mimeType
+                        )
+                    )
+
+                    append("\",")
+
+
+                    append(
+                        "\"size\":"
+                    )
+
+                    append(
+                        file.size
+                    )
+
+                    append(",")
+
+
+                    append(
+                        "\"path\":\""
+                    )
+
+                    append(
+                        escapeJson(
+                            file.path
+                        )
+                    )
+
+                    append("\",")
+
+
+                    append(
+                        "\"category\":\""
+                    )
+
+                    append(
+                        escapeJson(
+                            file.category
+                        )
+                    )
+
+                    append("\"")
+
+
+                    append("}")
+                }
+
+
+                append("]")
+            }
+
+
+        sendResponse(
+            output,
+            "200 OK",
+            "application/json; charset=utf-8",
+            json.toByteArray(
+                Charsets.UTF_8
+            )
+        )
+    }
+
+
+    // =========================================================
+    // RESPONSE
+    // =========================================================
 
     private fun sendResponse(
         output: BufferedOutputStream,
@@ -1625,6 +2372,10 @@ class LocalHttpServer(
                 )
 
                 append(
+                    "Cache-Control: no-cache\r\n"
+                )
+
+                append(
                     "Connection: close\r\n"
                 )
 
@@ -1633,18 +2384,26 @@ class LocalHttpServer(
                 )
             }
 
+
         output.write(
             header.toByteArray(
                 Charsets.UTF_8
             )
         )
 
+
         output.write(
             data
         )
 
+
         output.flush()
     }
+
+
+    // =========================================================
+    // TEXT RESPONSE
+    // =========================================================
 
     private fun sendText(
         output: BufferedOutputStream,
@@ -1662,9 +2421,10 @@ class LocalHttpServer(
         )
     }
 
-    // ---------------------------------------------------------
-    // HTML ESCAPING
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // HTML ESCAPE
+    // =========================================================
 
     private fun escapeHtml(
         value: String
@@ -1693,9 +2453,42 @@ class LocalHttpServer(
             )
     }
 
-    // ---------------------------------------------------------
-    // HTTP HEADER ESCAPING
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // JSON ESCAPE
+    // =========================================================
+
+    private fun escapeJson(
+        value: String
+    ): String {
+
+        return value
+            .replace(
+                "\\",
+                "\\\\"
+            )
+            .replace(
+                "\"",
+                "\\\""
+            )
+            .replace(
+                "\n",
+                "\\n"
+            )
+            .replace(
+                "\r",
+                "\\r"
+            )
+            .replace(
+                "\t",
+                "\\t"
+            )
+    }
+
+
+    // =========================================================
+    // HTTP HEADER ESCAPE
+    // =========================================================
 
     private fun escapeHeader(
         value: String
@@ -1720,27 +2513,33 @@ class LocalHttpServer(
             )
     }
 
-    // ---------------------------------------------------------
-    // FILE SIZE
-    // ---------------------------------------------------------
+
+    // =========================================================
+    // SIZE
+    // =========================================================
 
     private fun formatSize(
         size: Long
     ): String {
 
-        if (size < 1024) {
+        if (
+            size < 1024
+        ) {
+
             return "$size B"
         }
 
+
         if (
             size <
-            1024 * 1024
+            1024L * 1024L
         ) {
 
-            return "${
-                size / 1024
-            } KB"
+            return "%.1f KB".format(
+                size / 1024.0
+            )
         }
+
 
         if (
             size <
@@ -1749,7 +2548,7 @@ class LocalHttpServer(
             1024L
         ) {
 
-            return "%.2f MB".format(
+            return "%.1f MB".format(
                 size /
                     (
                         1024.0 *
@@ -1757,6 +2556,7 @@ class LocalHttpServer(
                     )
             )
         }
+
 
         return "%.2f GB".format(
             size /
