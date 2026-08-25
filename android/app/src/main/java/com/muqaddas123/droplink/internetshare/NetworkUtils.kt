@@ -1,4 +1,4 @@
-package com.muqaddas123.droplink
+package com.muqaddas123.droplink.internetshare
 
 import android.content.Context
 import java.net.Inet4Address

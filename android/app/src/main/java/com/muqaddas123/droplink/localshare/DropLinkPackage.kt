@@ -1,21 +1,19 @@
-package com.muqaddas123.droplink
+package com.muqaddas123.droplink.localshare
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
 
-class InternetTransferPackage :
-    ReactPackage {
+class DropLinkPackage : ReactPackage {
 
     override fun createNativeModules(
         reactContext: ReactApplicationContext
     ): List<NativeModule> {
 
         return listOf(
-            InternetTransferModule(
-                reactContext
-            )
+          DropLinkModule(reactContext),
+DropLinkFilePicker(reactContext)
         )
     }
 

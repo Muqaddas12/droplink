@@ -1,4 +1,4 @@
-        package com.muqaddas123.droplink
+        package com.muqaddas123.droplink.internetshare
 
         import java.io.BufferedInputStream
         import java.io.BufferedOutputStream

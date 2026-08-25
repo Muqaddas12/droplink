@@ -2,6 +2,7 @@ package com.muqaddas123.droplink.openfile
 
 import android.content.ClipData
 import android.content.Intent
+import android.net.Uri
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import com.facebook.react.bridge.Promise
@@ -65,7 +66,6 @@ class OpenFileModule(
             )
         }
     }
-
     // =========================================================
     // GET MIME TYPE
     // =========================================================
@@ -103,14 +103,14 @@ class OpenFileModule(
             )
         }
     }
-
     // =========================================================
     // OPEN FILE
     // =========================================================
 
     @ReactMethod
     fun openFile(
-        filePath: String,
+        filePathOrUri: String,
+        requestedMimeType: String?,
         promise: Promise
     ) {
         try {
@@ -119,24 +119,30 @@ class OpenFileModule(
             // ORIGINAL FILE PATH
             // -------------------------------------------------
 
-            val file =
-                File(filePath)
+            val sourceUri =
+                Uri.parse(filePathOrUri)
 
-            if (!file.exists()) {
+            val isContentUri =
+                sourceUri.scheme == "content"
+
+            val file =
+                File(filePathOrUri)
+
+            if (!isContentUri && !file.exists()) {
 
                 promise.reject(
                     "FILE_NOT_FOUND",
-                    "File does not exist: $filePath"
+                    "File does not exist: $filePathOrUri"
                 )
 
                 return
             }
 
-            if (!file.isFile) {
+            if (!isContentUri && !file.isFile) {
 
                 promise.reject(
                     "INVALID_FILE",
-                    "Path is not a file: $filePath"
+                    "Path is not a file: $filePathOrUri"
                 )
 
                 return
@@ -154,7 +160,8 @@ class OpenFileModule(
                     .lowercase()
 
             val mimeType =
-                MimeTypeMap
+                requestedMimeType
+                    ?: MimeTypeMap
                     .getSingleton()
                     .getMimeTypeFromExtension(
                         extension
@@ -166,11 +173,15 @@ class OpenFileModule(
             // -------------------------------------------------
 
             val uri =
-                FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    file
-                )
+                if (isContentUri) {
+                    sourceUri
+                } else {
+                    FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        file
+                    )
+                }
 
             android.util.Log.d(
                 "OpenFile",

@@ -1,4 +1,5 @@
-package com.muqaddas123.droplink
+package com.muqaddas123.droplink.internetshare
+
 
 import android.net.Uri
 

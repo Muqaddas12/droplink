@@ -1,5 +1,7 @@
 package com.muqaddas123.droplink
 import com.muqaddas123.droplink.openfile.OpenFilePackage
+import com.muqaddas123.droplink.localshare.DropLinkPackage
+import com.muqaddas123.droplink.internetshare.InternetTransferPackage
 import android.app.Application
 import android.content.res.Configuration
 

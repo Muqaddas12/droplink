@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 
 import { pickFiles } from '@/lib/nativeFilePicker';
+import { openFile } from '@/lib/openFile';
 
 import {
   createInternetServer,
@@ -165,6 +166,28 @@ export default function TabTwoScreen() {
     }
   };
 
+  const handleSelectedFilePress = async (
+    file: Awaited<ReturnType<typeof pickFiles>>[number],
+  ) => {
+    try {
+      await openFile(
+        file.uri,
+        file.mimeType,
+      );
+    } catch (error) {
+      console.error(
+        'OPEN INTERNET SHARE FILE ERROR:',
+        error,
+      );
+
+      Alert.alert(
+        'Cannot Open File',
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
+  };
   const totalSize =
     selectedFiles.reduce(
       (total, file) =>
@@ -532,9 +555,15 @@ export default function TabTwoScreen() {
           {selectedFiles.map(
             (file, index) => (
 
-              <View
+              <Pressable
                 key={`${file.uri}-${index}`}
                 style={styles.fileRow}
+                onPress={() =>
+                  handleSelectedFilePress(file)
+                }
+                android_ripple={{
+                  color: '#e5e7eb',
+                }}
               >
 
                 <View style={styles.fileIcon}>
@@ -568,7 +597,7 @@ export default function TabTwoScreen() {
 
                 </View>
 
-              </View>
+              </Pressable>
             )
           )}
 

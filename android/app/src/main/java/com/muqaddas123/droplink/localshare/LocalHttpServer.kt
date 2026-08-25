@@ -1,4 +1,4 @@
-package com.muqaddas123.droplink
+package com.muqaddas123.droplink.localshare
 
 import android.content.ContentResolver
 import android.net.Uri
