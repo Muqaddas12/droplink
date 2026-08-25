@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+
 import {
   Alert,
   AppState,
@@ -10,6 +16,10 @@ import {
   StyleSheet,
   Text,
   View,
+} from 'react-native';
+
+import {
+  NativeModules,
 } from 'react-native';
 
 import { pickFiles } from '@/lib/nativeFilePicker';
@@ -30,6 +40,13 @@ import {
 } from '@/lib/nativeDropLink';
 
 export default function TabOneScreen() {
+
+  // =========================================================
+  // NATIVE MODULES
+  // =========================================================
+
+  const { OpenFile } = NativeModules;
+
   // =========================================================
   // STATE
   // =========================================================
@@ -46,18 +63,38 @@ export default function TabOneScreen() {
   const [receivedFiles, setReceivedFiles] =
     useState<ReceivedFile[]>([]);
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] =
+    useState(false);
 
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] =
+    useState(false);
 
   const [isServerStarted, setIsServerStarted] =
     useState(false);
+
+  // =========================================================
+  // RECEIVED FILES SNAPSHOT
+  // =========================================================
+  //
+  // When the server starts, we remember every file that already
+  // exists.
+  //
+  // While the server is running, only files NOT in this Set
+  // are displayed.
+  //
+  // When the server stops, the Set is cleared and all received
+  // files are displayed again.
+  //
+
+  const receivedFilesAtServerStart =
+    useRef<Set<string>>(new Set());
 
   // =========================================================
   // FORMAT SIZE
   // =========================================================
 
   const formatSize = (bytes: number) => {
+
     if (bytes < 1024) {
       return `${bytes} B`;
     }
@@ -78,6 +115,7 @@ export default function TabOneScreen() {
   // =========================================================
 
   const getFileIcon = (mimeType?: string | null) => {
+
     if (mimeType?.startsWith('image/')) {
       return '🖼️';
     }
@@ -113,6 +151,7 @@ export default function TabOneScreen() {
     category?: string,
     mimeType?: string,
   ) => {
+
     const type = category?.toLowerCase();
 
     if (type === 'images') {
@@ -149,218 +188,259 @@ export default function TabOneScreen() {
   // =========================================================
   // OPEN RECEIVED FILE
   // =========================================================
+const handleReceivedFilePress = async (
+  file: ReceivedFile,
+) => {
 
-  const getFileOpenUri = (path: string) => {
-    if (
-      path.startsWith('content://') ||
-      path.startsWith('file://') ||
-      path.startsWith('http://') ||
-      path.startsWith('https://')
-    ) {
-      return path;
-    }
+  console.log('OPEN RECEIVED FILE:', file);
 
-    return `file://${path}`;
-  };
+  try {
 
-  const openReceivedFile = async (file: ReceivedFile) => {
-    try {
-      const uri = getFileOpenUri(file.path);
-
-      // Let Android choose the appropriate installed application
-      // for the received file.
-      const canOpen = await Linking.canOpenURL(uri);
-
-      if (!canOpen) {
-        Alert.alert(
-          'Cannot Open File',
-          `No installed app can open "${file.name}".`,
-          [
-            {
-              text: 'Share',
-              onPress: async () => {
-                try {
-                  await Share.share({
-                    title: file.name,
-                    message: file.name,
-                    url: uri,
-                  });
-                } catch (shareError) {
-                  console.error(
-                    'SHARE RECEIVED FILE ERROR:',
-                    shareError,
-                  );
-                }
-              },
-            },
-            {
-              text: 'Cancel',
-              style: 'cancel',
-            },
-          ],
-        );
-        return;
-      }
-
-      await Linking.openURL(uri);
-    } catch (error) {
-      console.error('OPEN RECEIVED FILE ERROR:', error);
-
-      Alert.alert(
-        'Cannot Open File',
-        `Could not open "${file.name}".`,
-        [
-          {
-            text: 'Share',
-            onPress: async () => {
-              try {
-                const uri = getFileOpenUri(file.path);
-
-                await Share.share({
-                  title: file.name,
-                  message: file.name,
-                  url: uri,
-                });
-              } catch (shareError) {
-                console.error(
-                  'SHARE RECEIVED FILE ERROR:',
-                  shareError,
-                );
-              }
-            },
-          },
-          {
-            text: 'Cancel',
-            style: 'cancel',
-          },
-        ],
+    if (!OpenFile?.openFile) {
+      throw new Error(
+        'OpenFile native module is not available',
       );
     }
-  };
 
-  const handleReceivedFilePress = (file: ReceivedFile) => {
-    console.log(file)
-    Linking.openURL(`content:/${file.path}`)
-  };
+    await OpenFile.openFile(
+      file.path,
+    );
+
+  } catch (error) {
+
+    console.error(
+      'OPEN RECEIVED FILE ERROR:',
+      error,
+    );
+
+    Alert.alert(
+      'Cannot Open File',
+      error instanceof Error
+        ? error.message
+        : String(error),
+    );
+  }
+};
 
   // =========================================================
   // LOAD SERVER DATA
   // =========================================================
+  //
+  // serverRunningOverride is used when starting/stopping the
+  // server because React state updates asynchronously.
+  //
 
-  const loadServerData = useCallback(async () => {
-    // =======================================================
-    // RECEIVED FILES
-    // =======================================================
-    // Received files are persistent local data. They must be
-    // loaded even when the local server is stopped.
-    try {
-      const received = await scanLocalReceivedFiles();
-      setReceivedFiles(received);
-      console.log(received)
-    } catch (error) {
-      console.error('LOAD RECEIVED FILES ERROR:', error);
-    }
+  const loadServerData = useCallback(
+    async (
+      serverRunningOverride?: boolean,
+    ) => {
 
-    // =======================================================
-    // SERVER STATUS
-    // =======================================================
-    try {
-      const status = await getLocalServerStatus();
+      const running =
+        serverRunningOverride ??
+        isServerStarted;
 
-      setServerStatus(status);
-      setIsServerStarted(status.running);
+      // =======================================================
+      // RECEIVED FILES
+      // =======================================================
 
-      if (status.running && status.ip && status.url) {
-        setServerInfo({
-          ip: status.ip,
-          port: status.port,
-          url: status.url,
-        });
-      } else {
+      try {
+
+        const allReceived =
+          await scanLocalReceivedFiles();
+
+        if (running) {
+
+          // ---------------------------------------------------
+          // SERVER RUNNING
+          // ---------------------------------------------------
+          //
+          // Show ONLY files received after this server session
+          // started.
+          //
+
+          const currentSessionFiles =
+            allReceived.filter(
+              file =>
+                !receivedFilesAtServerStart.current.has(
+                  file.path,
+                ),
+            );
+
+          setReceivedFiles(
+            currentSessionFiles,
+          );
+
+          console.log(
+            'CURRENT SERVER SESSION RECEIVED:',
+            currentSessionFiles,
+          );
+
+        } else {
+
+          // ---------------------------------------------------
+          // SERVER STOPPED
+          // ---------------------------------------------------
+          //
+          // Show ALL persisted received files.
+          //
+
+          setReceivedFiles(
+            allReceived,
+          );
+
+          console.log(
+            'ALL RECEIVED FILES:',
+            allReceived,
+          );
+        }
+
+      } catch (error) {
+
+        console.error(
+          'LOAD RECEIVED FILES ERROR:',
+          error,
+        );
+      }
+
+      // =======================================================
+      // SERVER STATUS
+      // =======================================================
+
+      try {
+
+        const status =
+          await getLocalServerStatus();
+
+        setServerStatus(status);
+
+        setIsServerStarted(
+          status.running,
+        );
+
+        if (
+          status.running &&
+          status.ip &&
+          status.url
+        ) {
+
+          setServerInfo({
+            ip: status.ip,
+            port: status.port,
+            url: status.url,
+          });
+
+        } else {
+
+          setServerInfo(null);
+        }
+
+      } catch (error) {
+
+        console.error(
+          'LOAD SERVER STATUS ERROR:',
+          error,
+        );
+
+        setIsServerStarted(false);
+
         setServerInfo(null);
       }
-    } catch (error) {
-      console.error('LOAD SERVER STATUS ERROR:', error);
-      setIsServerStarted(false);
-      setServerInfo(null);
-    }
 
-    // =======================================================
-    // SHARED FILES
-    // =======================================================
-    try {
-      const files = await getLocalSharedFiles();
-      setSharedFiles(files);
-    } catch (error) {
-      console.error('LOAD SHARED FILES ERROR:', error);
-    }
-  }, []);
+      // =======================================================
+      // SHARED FILES
+      // =======================================================
+
+      try {
+
+        const files =
+          await getLocalSharedFiles();
+
+        setSharedFiles(files);
+
+      } catch (error) {
+
+        console.error(
+          'LOAD SHARED FILES ERROR:',
+          error,
+        );
+      }
+    },
+    [isServerStarted],
+  );
 
   // =========================================================
   // INITIAL LOAD
   // =========================================================
 
   useEffect(() => {
+
     void loadServerData();
+
   }, [loadServerData]);
 
   // =========================================================
   // RELOAD WHEN APP BECOMES ACTIVE
   // =========================================================
-  // This is important for persistent received files. If the
-  // server was stopped while the screen/app was in the
-  // background, refresh the local file list when the user
-  // returns to DropLink.
 
   useEffect(() => {
-    const subscription = AppState.addEventListener(
-      'change',
-      nextState => {
-        if (nextState === 'active') {
-          void loadServerData();
-        }
-      },
-    );
+
+    const subscription =
+      AppState.addEventListener(
+        'change',
+        nextState => {
+
+          if (nextState === 'active') {
+            void loadServerData();
+          }
+        },
+      );
 
     return () => {
       subscription.remove();
     };
+
   }, [loadServerData]);
 
   // =========================================================
   // AUTO REFRESH WHILE SERVER IS RUNNING
   // =========================================================
-  //
-  // This keeps the received-file list current while another
-  // device is uploading files to this phone.
-  //
-  // The server is NOT restarted and the IP/port do not change.
-  // When the server is stopped, polling is automatically removed.
-  //
 
   useEffect(() => {
+
     if (!isServerStarted) {
       return;
     }
 
-    const interval = setInterval(() => {
-      void loadServerData();
-    }, 2000);
+    const interval =
+      setInterval(() => {
+
+        void loadServerData();
+
+      }, 2000);
 
     return () => {
       clearInterval(interval);
     };
-  }, [isServerStarted, loadServerData]);
+
+  }, [
+    isServerStarted,
+    loadServerData,
+  ]);
 
   // =========================================================
   // REFRESH
   // =========================================================
 
   const handleRefresh = async () => {
+
     try {
+
       setRefreshing(true);
+
       await loadServerData();
+
     } finally {
+
       setRefreshing(false);
     }
   };
@@ -370,20 +450,24 @@ export default function TabOneScreen() {
   // =========================================================
 
   const handleSelectFiles = async () => {
+
     if (loading) {
       return;
     }
 
     try {
+
       setLoading(true);
 
       // -----------------------------------------------------
       // NETWORK
       // -----------------------------------------------------
 
-      const network = await getNetworkInfo();
+      const network =
+        await getNetworkInfo();
 
       if (!network.connected) {
+
         Alert.alert(
           'No Network',
           'Please connect to a Wi-Fi network before sharing.',
@@ -396,7 +480,8 @@ export default function TabOneScreen() {
       // PICK FILES
       // -----------------------------------------------------
 
-      const files = await pickFiles();
+      const files =
+        await pickFiles();
 
       if (!files.length) {
         return;
@@ -407,13 +492,56 @@ export default function TabOneScreen() {
       // -----------------------------------------------------
 
       if (!isServerStarted) {
-        const info = await startLocalServer(files);
+
+        // ---------------------------------------------------
+        // SNAPSHOT EXISTING RECEIVED FILES
+        // ---------------------------------------------------
+        //
+        // These files existed BEFORE this server session.
+        // They will not be shown while the server is running.
+        //
+
+        try {
+
+          const existingReceivedFiles =
+            await scanLocalReceivedFiles();
+
+          receivedFilesAtServerStart.current =
+            new Set(
+              existingReceivedFiles.map(
+                file => file.path,
+              ),
+            );
+
+          console.log(
+            'RECEIVED FILES AT SERVER START:',
+            existingReceivedFiles,
+          );
+
+        } catch (error) {
+
+          console.error(
+            'RECEIVED FILE SNAPSHOT ERROR:',
+            error,
+          );
+
+          receivedFilesAtServerStart.current.clear();
+        }
+
+        // ---------------------------------------------------
+        // START SERVER
+        // ---------------------------------------------------
+
+        const info =
+          await startLocalServer(files);
 
         setServerInfo(info);
 
         setIsServerStarted(true);
 
-        await loadServerData();
+        // Explicitly tell loadServerData that the server
+        // is now running.
+        await loadServerData(true);
 
         Alert.alert(
           'DropLink Ready',
@@ -427,15 +555,23 @@ export default function TabOneScreen() {
       // SERVER ALREADY RUNNING
       // -----------------------------------------------------
 
-      const existingUris = new Set(
-        sharedFiles.map(file => file.uri),
-      );
+      const existingUris =
+        new Set(
+          sharedFiles.map(
+            file => file.uri,
+          ),
+        );
 
-      const newFiles = files.filter(
-        file => !existingUris.has(file.uri),
-      );
+      const newFiles =
+        files.filter(
+          file =>
+            !existingUris.has(
+              file.uri,
+            ),
+        );
 
       if (!newFiles.length) {
+
         Alert.alert(
           'Already Added',
           'All selected files are already being shared.',
@@ -448,10 +584,13 @@ export default function TabOneScreen() {
       // ADD WITHOUT STOPPING SERVER
       // -----------------------------------------------------
 
-      await addLocalShareFiles(newFiles);
+      await addLocalShareFiles(
+        newFiles,
+      );
 
       // Refresh native list so downloadCount/index/etc.
       // always come from the native server.
+
       await loadServerData();
 
       Alert.alert(
@@ -462,8 +601,13 @@ export default function TabOneScreen() {
             : 'files have'
         } been added to the running server.`,
       );
+
     } catch (error) {
-      console.error('FILE SHARE ERROR:', error);
+
+      console.error(
+        'FILE SHARE ERROR:',
+        error,
+      );
 
       Alert.alert(
         'Share Error',
@@ -471,7 +615,9 @@ export default function TabOneScreen() {
           ? error.message
           : String(error),
       );
+
     } finally {
+
       setLoading(false);
     }
   };
@@ -481,27 +627,42 @@ export default function TabOneScreen() {
   // =========================================================
 
   const handleStop = async () => {
+
     try {
+
       setLoading(true);
 
       await stopLocalServer();
 
+      // -----------------------------------------------------
+      // CLEAR CURRENT SERVER SESSION
+      // -----------------------------------------------------
+
+      receivedFilesAtServerStart.current.clear();
+
       setServerInfo(null);
+
       setServerStatus(null);
+
       setSharedFiles([]);
+
       setIsServerStarted(false);
 
-      // NEVER clear receivedFiles here.
-      // They are persisted files and must remain visible when the
-      // server is not running.
-      try {
-        const received = await scanLocalReceivedFiles();
-        setReceivedFiles(received);
-      } catch (error) {
-        console.error('LOAD RECEIVED FILES AFTER STOP ERROR:', error);
-      }
+      // -----------------------------------------------------
+      // SERVER STOPPED
+      // -----------------------------------------------------
+      //
+      // Show ALL persisted received files again.
+      //
+
+      await loadServerData(false);
+
     } catch (error) {
-      console.error('STOP SERVER ERROR:', error);
+
+      console.error(
+        'STOP SERVER ERROR:',
+        error,
+      );
 
       Alert.alert(
         'Error',
@@ -509,7 +670,9 @@ export default function TabOneScreen() {
           ? error.message
           : String(error),
       );
+
     } finally {
+
       setLoading(false);
     }
   };
@@ -519,19 +682,26 @@ export default function TabOneScreen() {
   // =========================================================
 
   const handleShareUrl = async () => {
+
     if (!serverInfo?.url) {
       return;
     }
 
     try {
+
       await Share.share({
         message:
           `Send and receive files with DropLink:\n` +
           serverInfo.url,
         url: serverInfo.url,
       });
+
     } catch (error) {
-      console.error('SHARE URL ERROR:', error);
+
+      console.error(
+        'SHARE URL ERROR:',
+        error,
+      );
 
       Alert.alert(
         'Share Error',
@@ -546,25 +716,30 @@ export default function TabOneScreen() {
   // TOTAL SHARED SIZE
   // =========================================================
 
-  const totalSharedSize = sharedFiles.reduce(
-    (total, file) => total + (file.size || 0),
-    0,
-  );
+  const totalSharedSize =
+    sharedFiles.reduce(
+      (total, file) =>
+        total + (file.size || 0),
+      0,
+    );
 
   // =========================================================
   // TOTAL RECEIVED SIZE
   // =========================================================
 
-  const totalReceivedSize = receivedFiles.reduce(
-    (total, file) => total + (file.size || 0),
-    0,
-  );
+  const totalReceivedSize =
+    receivedFiles.reduce(
+      (total, file) =>
+        total + (file.size || 0),
+      0,
+    );
 
   // =========================================================
   // UI
   // =========================================================
 
   return (
+
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.container}
@@ -576,13 +751,17 @@ export default function TabOneScreen() {
         />
       }
     >
+
       {/* ================================================= */}
       {/* HEADER */}
       {/* ================================================= */}
 
       {!isServerStarted && (
+
         <View style={styles.header}>
+
           <View style={styles.headerText}>
+
             <Text style={styles.title}>
               Local Share
             </Text>
@@ -590,13 +769,17 @@ export default function TabOneScreen() {
             <Text style={styles.subtitle}>
               Fast file sharing on your network
             </Text>
+
           </View>
 
           <View style={styles.iconBox}>
+
             <Text style={styles.iconText}>
               📡
             </Text>
+
           </View>
+
         </View>
       )}
 
@@ -605,6 +788,7 @@ export default function TabOneScreen() {
       {/* ================================================= */}
 
       {serverInfo && (
+
         <View style={styles.serverCard}>
 
           {/* SERVER HEADER */}
@@ -614,9 +798,11 @@ export default function TabOneScreen() {
             {/* LEFT */}
 
             <View style={styles.serverIdentity}>
+
               <View style={styles.serverDot} />
 
               <View style={styles.serverIdentityText}>
+
                 <Text
                   style={styles.serverTitle}
                   numberOfLines={1}
@@ -630,7 +816,9 @@ export default function TabOneScreen() {
                 >
                   Ready to send & receive
                 </Text>
+
               </View>
+
             </View>
 
             {/* RIGHT */}
@@ -638,6 +826,7 @@ export default function TabOneScreen() {
             <View style={styles.serverStatus}>
 
               <View style={styles.networkInfo}>
+
                 <Text style={styles.infoLabel}>
                   IP ADDRESS
                 </Text>
@@ -648,9 +837,11 @@ export default function TabOneScreen() {
                 >
                   {serverInfo.ip}
                 </Text>
+
               </View>
 
               <View style={styles.networkInfo}>
+
                 <Text style={styles.infoLabel}>
                   PORT
                 </Text>
@@ -658,17 +849,21 @@ export default function TabOneScreen() {
                 <Text style={styles.infoValue}>
                   {serverInfo.port}
                 </Text>
+
               </View>
 
               <View style={styles.liveBadge}>
+
                 <View style={styles.liveDot} />
 
                 <Text style={styles.liveText}>
                   LIVE
                 </Text>
+
               </View>
 
             </View>
+
           </View>
 
           {/* URL */}
@@ -678,6 +873,7 @@ export default function TabOneScreen() {
           </Text>
 
           <View style={styles.urlBox}>
+
             <Text
               style={styles.urlText}
               selectable
@@ -685,6 +881,7 @@ export default function TabOneScreen() {
             >
               {serverInfo.url}
             </Text>
+
           </View>
 
           {/* SHARE URL */}
@@ -693,9 +890,11 @@ export default function TabOneScreen() {
             style={styles.shareUrlButton}
             onPress={handleShareUrl}
           >
+
             <Text style={styles.shareUrlButtonText}>
               ↗ Share URL
             </Text>
+
           </Pressable>
 
           {/* SERVER STATS */}
@@ -703,6 +902,7 @@ export default function TabOneScreen() {
           <View style={styles.statsRow}>
 
             <View style={styles.statItem}>
+
               <Text style={styles.statValue}>
                 {sharedFiles.length}
               </Text>
@@ -710,11 +910,13 @@ export default function TabOneScreen() {
               <Text style={styles.statLabel}>
                 Shared
               </Text>
+
             </View>
 
             <View style={styles.statDivider} />
 
             <View style={styles.statItem}>
+
               <Text style={styles.statValue}>
                 {receivedFiles.length}
               </Text>
@@ -722,22 +924,28 @@ export default function TabOneScreen() {
               <Text style={styles.statLabel}>
                 Received
               </Text>
+
             </View>
 
             <View style={styles.statDivider} />
 
             <View style={styles.statItem}>
+
               <Text style={styles.statValue}>
+
                 {sharedFiles.reduce(
                   (total, file) =>
-                    total + file.downloadCount,
+                    total +
+                    file.downloadCount,
                   0,
                 )}
+
               </Text>
 
               <Text style={styles.statLabel}>
                 Downloads
               </Text>
+
             </View>
 
           </View>
@@ -749,10 +957,13 @@ export default function TabOneScreen() {
             onPress={handleStop}
             disabled={loading}
           >
+
             <Text style={styles.stopButtonText}>
               ■ Stop Server
             </Text>
+
           </Pressable>
+
         </View>
       )}
 
@@ -763,19 +974,25 @@ export default function TabOneScreen() {
       <Pressable
         style={[
           styles.selectButton,
-          loading && styles.disabledButton,
+          loading &&
+            styles.disabledButton,
         ]}
         onPress={handleSelectFiles}
         disabled={loading}
       >
+
         <View style={styles.selectIcon}>
+
           <Text style={styles.selectIconText}>
             +
           </Text>
+
         </View>
 
         <View style={styles.selectContent}>
+
           <Text style={styles.selectTitle}>
+
             {loading
               ? isServerStarted
                 ? 'Adding Files...'
@@ -783,18 +1000,23 @@ export default function TabOneScreen() {
               : isServerStarted
                 ? 'Add More Files'
                 : 'Select & Share'}
+
           </Text>
 
           <Text style={styles.selectSubtitle}>
+
             {isServerStarted
               ? 'Add files without stopping the server'
               : 'Choose photos, videos or documents'}
+
           </Text>
+
         </View>
 
         <Text style={styles.arrow}>
           ›
         </Text>
+
       </Pressable>
 
       {/* ================================================= */}
@@ -802,48 +1024,69 @@ export default function TabOneScreen() {
       {/* ================================================= */}
 
       {sharedFiles.length > 0 && (
+
         <View style={styles.filesCard}>
 
           <View style={styles.filesHeader}>
+
             <View>
+
               <Text style={styles.filesTitle}>
                 Shared Files
               </Text>
 
               <Text style={styles.filesSubtitle}>
+
                 {sharedFiles.length}{' '}
                 {sharedFiles.length === 1
                   ? 'file'
                   : 'files'}
                 {' • '}
-                {formatSize(totalSharedSize)}
+                {formatSize(
+                  totalSharedSize,
+                )}
+
               </Text>
+
             </View>
 
             <View style={styles.sizeBadge}>
+
               <Text style={styles.sizeBadgeText}>
+
                 {sharedFiles.reduce(
                   (total, file) =>
-                    total + file.downloadCount,
+                    total +
+                    file.downloadCount,
                   0,
                 )}{' '}
                 downloads
+
               </Text>
+
             </View>
+
           </View>
 
           {sharedFiles.map(file => (
+
             <View
               key={`${file.index}-${file.uri}`}
               style={styles.fileRow}
             >
+
               <View style={styles.fileIcon}>
+
                 <Text style={styles.fileIconText}>
-                  {getFileIcon(file.mimeType)}
+                  {getFileIcon(
+                    file.mimeType,
+                  )}
                 </Text>
+
               </View>
 
               <View style={styles.fileInfo}>
+
                 <Text
                   style={styles.fileName}
                   numberOfLines={1}
@@ -852,17 +1095,24 @@ export default function TabOneScreen() {
                 </Text>
 
                 <View style={styles.fileMeta}>
+
                   <Text style={styles.fileSize}>
-                    {formatSize(file.size)}
+                    {formatSize(
+                      file.size,
+                    )}
                   </Text>
 
                   <Text style={styles.downloadCount}>
                     ↓ {file.downloadCount}
                   </Text>
+
                 </View>
+
               </View>
+
             </View>
           ))}
+
         </View>
       )}
 
@@ -871,77 +1121,139 @@ export default function TabOneScreen() {
       {/* ================================================= */}
 
       {receivedFiles.length > 0 && (
+
         <View style={styles.receivedCard}>
 
           <View style={styles.filesHeader}>
+
             <View>
+
               <Text style={styles.filesTitle}>
+
                 {isServerStarted
                   ? 'Received Files'
                   : 'Recently Received'}
+
               </Text>
 
               <Text style={styles.filesSubtitle}>
+
                 {receivedFiles.length}{' '}
                 {receivedFiles.length === 1
                   ? 'file'
                   : 'files'}
                 {' • '}
-                {formatSize(totalReceivedSize)}
-                {!isServerStarted ? ' • Saved on device' : ''}
+                {formatSize(
+                  totalReceivedSize,
+                )}
+
+                {!isServerStarted
+                  ? ' • Saved on device'
+                  : ''}
+
               </Text>
+
             </View>
 
             <View style={styles.receivedBadge}>
+
               <Text style={styles.receivedBadgeText}>
-                {isServerStarted ? 'RECEIVED' : 'RECENT'}
+
+                {isServerStarted
+                  ? 'RECEIVED'
+                  : 'RECENT'}
+
               </Text>
+
             </View>
+
           </View>
 
-          {receivedFiles.map((file, index) => (
-            <Pressable
-              key={`${file.path}-${index}`}
-              style={styles.receivedFilePressable}
-              onPress={() => handleReceivedFilePress(file)}
-              android_ripple={{ color: '#d1fae5' }}
-            >
-              <View style={styles.receivedIcon}>
-                <Text style={styles.fileIconText}>
-                  {getReceivedFileIcon(
-                    file.category,
-                    file.mimeType,
-                  )}
-                </Text>
-              </View>
+          {receivedFiles.map(
+            (file, index) => (
 
-              <View style={styles.fileInfo}>
-                <Text
-                  style={styles.fileName}
-                  numberOfLines={1}
+              <Pressable
+                key={`${file.path}-${index}`}
+                style={
+                  styles.receivedFilePressable
+                }
+                onPress={() =>
+                  handleReceivedFilePress(
+                    file,
+                  )
+                }
+                android_ripple={{
+                  color: '#d1fae5',
+                }}
+              >
+
+                <View
+                  style={styles.receivedIcon}
                 >
-                  {file.name}
-                </Text>
 
-                <Text style={styles.fileSize}>
-                  {formatSize(file.size)}
-                </Text>
+                  <Text
+                    style={
+                      styles.fileIconText
+                    }
+                  >
+                    {getReceivedFileIcon(
+                      file.category,
+                      file.mimeType,
+                    )}
+                  </Text>
 
-                <Text
-                  style={styles.fileCategory}
-                  numberOfLines={1}
+                </View>
+
+                <View
+                  style={styles.fileInfo}
                 >
-                  {file.category}
-                </Text>
-              </View>
 
-              <View style={styles.receivedOpenButton}>
-                <Text style={styles.receivedOpenButtonText}>
-                  ›
-                </Text>
-              </View>
-            </Pressable>
-          ))}
+                  <Text
+                    style={styles.fileName}
+                    numberOfLines={1}
+                  >
+                    {file.name}
+                  </Text>
+
+                  <Text
+                    style={styles.fileSize}
+                  >
+                    {formatSize(
+                      file.size,
+                    )}
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.fileCategory
+                    }
+                    numberOfLines={1}
+                  >
+                    {file.category}
+                  </Text>
+
+                </View>
+
+                <View
+                  style={
+                    styles.receivedOpenButton
+                  }
+                >
+
+                  <Text
+                    style={
+                      styles.receivedOpenButtonText
+                    }
+                  >
+                    ›
+                  </Text>
+
+                </View>
+
+              </Pressable>
+            ),
+          )}
+
         </View>
       )}
 
@@ -952,7 +1264,9 @@ export default function TabOneScreen() {
       {!isServerStarted &&
         sharedFiles.length === 0 &&
         receivedFiles.length === 0 && (
+
           <View style={styles.emptyCard}>
+
             <Text style={styles.emptyIcon}>
               📁
             </Text>
@@ -965,6 +1279,7 @@ export default function TabOneScreen() {
               Received files will stay here even after
               the server is stopped.
             </Text>
+
           </View>
         )}
 
@@ -973,6 +1288,7 @@ export default function TabOneScreen() {
       {/* ================================================= */}
 
       <View style={styles.infoNote}>
+
         <Text style={styles.infoIcon}>
           ℹ
         </Text>
@@ -983,7 +1299,9 @@ export default function TabOneScreen() {
           shared files and upload files directly to
           this device.
         </Text>
+
       </View>
+
     </ScrollView>
   );
 }
@@ -993,6 +1311,7 @@ export default function TabOneScreen() {
 // =========================================================
 
 const styles = StyleSheet.create({
+
   screen: {
     flex: 1,
     backgroundColor: '#f8fafc',
@@ -1516,4 +1835,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: '#6b7280',
   },
+
 });

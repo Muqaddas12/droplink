@@ -1,5 +1,5 @@
 package com.muqaddas123.droplink
-
+import com.muqaddas123.droplink.openfile.OpenFilePackage
 import android.app.Application
 import android.content.res.Configuration
 
@@ -25,6 +25,7 @@ class MainApplication : Application(), ReactApplication {
     PackageList(this).packages.apply {
       add(DropLinkPackage())
       add(InternetTransferPackage())
+      add(OpenFilePackage())
     }
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"
 

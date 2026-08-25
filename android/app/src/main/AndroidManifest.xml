@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <!-- Apps that can handle VIEW intents -->
+
     <queries>
 
         <intent>
@@ -51,6 +52,8 @@
         android:enableOnBackInvokedCallback="false"
         android:usesCleartextTraffic="true">
 
+        <!-- Expo -->
+
         <meta-data
             android:name="expo.modules.updates.ENABLED"
             android:value="false" />
@@ -62,6 +65,8 @@
         <meta-data
             android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS"
             android:value="0" />
+
+        <!-- Main Activity -->
 
         <activity
             android:name=".MainActivity"
@@ -79,7 +84,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-
             <!-- DropLink custom URL -->
 
             <intent-filter>
@@ -91,55 +95,21 @@
                 <data android:scheme="droplink" />
             </intent-filter>
 
-
-            <!-- Images -->
-
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:mimeType="image/*" />
-            </intent-filter>
-
-
-            <!-- Videos -->
-
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:mimeType="video/*" />
-            </intent-filter>
-
-
-            <!-- Audio -->
-
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:mimeType="audio/*" />
-            </intent-filter>
-
-
-            <!-- PDF -->
-
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:mimeType="application/pdf" />
-            </intent-filter>
-
         </activity>
+
+        <!-- FileProvider for opening received files -->
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+
+        </provider>
 
     </application>
 
