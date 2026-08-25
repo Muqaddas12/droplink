@@ -17,6 +17,7 @@ import { pickFiles } from '@/lib/nativeFilePicker';
 import {
   addLocalShareFiles,
   getLocalReceivedFiles,
+  scanLocalReceivedFiles,
   getLocalServerStatus,
   getLocalSharedFiles,
   getNetworkInfo,
@@ -252,8 +253,9 @@ export default function TabOneScreen() {
     // Received files are persistent local data. They must be
     // loaded even when the local server is stopped.
     try {
-      const received = await getLocalReceivedFiles();
+      const received = await scanLocalReceivedFiles();
       setReceivedFiles(received);
+      console.log(received)
     } catch (error) {
       console.error('LOAD RECEIVED FILES ERROR:', error);
     }
@@ -492,7 +494,7 @@ export default function TabOneScreen() {
       // They are persisted files and must remain visible when the
       // server is not running.
       try {
-        const received = await getLocalReceivedFiles();
+        const received = await scanLocalReceivedFiles();
         setReceivedFiles(received);
       } catch (error) {
         console.error('LOAD RECEIVED FILES AFTER STOP ERROR:', error);

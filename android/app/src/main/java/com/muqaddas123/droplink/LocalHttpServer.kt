@@ -185,6 +185,79 @@ class LocalHttpServer(
             return receivedFiles.toList()
         }
     }
+    // =========================================================
+// SCAN ALL RECEIVED FILES FROM DOWNLOAD/DROPLINK
+// =========================================================
+
+fun scanReceivedFiles(): List<ReceivedFile> {
+
+    val root =
+        File(
+            Environment
+                .getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOWNLOADS
+                ),
+            "DropLink"
+        )
+
+    if (!root.exists() || !root.isDirectory) {
+        synchronized(receivedFiles) {
+            receivedFiles.clear()
+        }
+
+        return emptyList()
+    }
+
+    val scannedFiles =
+        mutableListOf<ReceivedFile>()
+
+    root.walkTopDown()
+        .filter { file ->
+            file.isFile
+        }
+        .forEach { file ->
+
+            val category =
+                file.parentFile
+                    ?.name
+                    ?: "Others"
+
+            val mimeType =
+                android.webkit.MimeTypeMap
+                    .getSingleton()
+                    .getMimeTypeFromExtension(
+                        file.extension.lowercase()
+                    )
+                    ?: "application/octet-stream"
+
+            scannedFiles.add(
+                ReceivedFile(
+                    name = file.name,
+                    mimeType = mimeType,
+                    size = file.length(),
+                    path = file.absolutePath,
+                    category = category
+                )
+            )
+        }
+
+    // Newest files first
+    scannedFiles.sortByDescending { file ->
+
+        File(file.path).lastModified()
+    }
+
+    synchronized(receivedFiles) {
+
+        receivedFiles.clear()
+
+        receivedFiles.addAll(
+            scannedFiles
+        )
+
+        return receivedFiles.toList()
+    }
+}
 
     // =========================================================
     // START
@@ -200,7 +273,9 @@ class LocalHttpServer(
 
             return port
         }
-
+   // Load previously received files
+    // from Download/DropLink
+    scanReceivedFiles()
         serverSocket =
             ServerSocket(0)
 
@@ -1848,6 +1923,11 @@ setInterval(
                 }
 
                 fileOutput.flush()
+
+                // Refresh the complete Download/DropLink
+                // directory so receivedFiles always matches
+                // the files physically stored on disk.
+                scanReceivedFiles()
 
                 /*
                  * Only expose the file after the

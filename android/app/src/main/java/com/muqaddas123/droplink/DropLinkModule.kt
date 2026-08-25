@@ -277,6 +277,65 @@ class DropLinkModule(
     }
 
     // =========================================================
+    // SCAN / REFRESH RECEIVED FILES
+    // =========================================================
+
+    /**
+     * Scans Download/DropLink recursively and returns
+     * all received files, including files received during
+     * previous server sessions.
+     *
+     * This works even when the server is currently stopped.
+     */
+    @ReactMethod
+    fun scanReceivedFiles(
+        promise: Promise
+    ) {
+
+        try {
+
+            val currentServer =
+                server
+
+            val files =
+                if (
+                    currentServer != null
+                ) {
+
+                    currentServer.scanReceivedFiles()
+
+                } else {
+
+                    /*
+                     * The server may be stopped, but the
+                     * received files still exist on disk.
+                     *
+                     * Create a temporary LocalHttpServer
+                     * only for scanning the Download/DropLink
+                     * directory. It is NOT started.
+                     */
+                    LocalHttpServer(
+                        reactContext.contentResolver
+                    ).scanReceivedFiles()
+                }
+
+            promise.resolve(
+                createReceivedFilesArray(
+                    files
+                )
+            )
+
+        } catch (e: Exception) {
+
+            promise.reject(
+                "SCAN_RECEIVED_FILES_ERROR",
+                e.message,
+                e
+            )
+        }
+    }
+
+    // =========================================================
     // GET SERVER STATUS
     // =========================================================
 

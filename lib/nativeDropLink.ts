@@ -116,6 +116,18 @@ type DropLinkNativeModule = {
   getReceivedFiles(): Promise<ReceivedFile[]>;
 
   // -------------------------------------------------------
+  // SCAN / REFRESH RECEIVED FILES
+  // -------------------------------------------------------
+
+  /**
+   * Scans Download/DropLink recursively
+   * and returns all received files.
+   *
+   * Files are returned newest first.
+   */
+  scanReceivedFiles(): Promise<ReceivedFile[]>;
+
+  // -------------------------------------------------------
   // SERVER STATUS
   // -------------------------------------------------------
 
@@ -242,6 +254,12 @@ export async function getLocalSharedFiles(): Promise<
 // GET RECEIVED FILES
 // =========================================================
 
+/**
+ * Gets the currently loaded received-file list.
+ *
+ * The native server loads files from
+ * Download/DropLink when the server starts.
+ */
 export async function getLocalReceivedFiles(): Promise<
   ReceivedFile[]
 > {
@@ -249,6 +267,27 @@ export async function getLocalReceivedFiles(): Promise<
   checkAndroid();
 
   return DropLink!.getReceivedFiles();
+}
+
+// =========================================================
+// SCAN / REFRESH RECEIVED FILES
+// =========================================================
+
+/**
+ * Scans Download/DropLink recursively.
+ *
+ * This finds previously received files even if
+ * they were received during an earlier server session.
+ *
+ * Files are returned newest first.
+ */
+export async function scanLocalReceivedFiles(): Promise<
+  ReceivedFile[]
+> {
+
+  checkAndroid();
+
+  return DropLink!.scanReceivedFiles();
 }
 
 // =========================================================
