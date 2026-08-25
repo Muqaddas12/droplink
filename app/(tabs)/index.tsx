@@ -1,478 +1,987 @@
-import React,{useState} from 'react';
-import { Alert,Pressable,ScrollView,StyleSheet,Text,View,Share, } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Alert,
+  AppState,
+  Linking,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+
 import { pickFiles } from '@/lib/nativeFilePicker';
-import { startLocalServer,stopLocalServer,getNetworkInfo,ServerInfo,NetworkInfo } from '@/lib/nativeDropLink';
+
+import {
+  addLocalShareFiles,
+  getLocalReceivedFiles,
+  getLocalServerStatus,
+  getLocalSharedFiles,
+  getNetworkInfo,
+  ReceivedFile,
+  ServerInfo,
+  ServerStatus,
+  SharedFile,
+  startLocalServer,
+  stopLocalServer,
+} from '@/lib/nativeDropLink';
 
 export default function TabOneScreen() {
+  // =========================================================
+  // STATE
+  // =========================================================
 
-  const [serverInfo,setServerInfo]=useState<ServerInfo|null>(null);
-  const [networkInfo, setNetworkInfo,] = useState<NetworkInfo | null>(null);
-  const [selectedFiles,setSelectedFiles]=useState<Awaited<ReturnType<typeof pickFiles>>>([]);
-  const [loading,setLoading]=useState(false);
+  const [serverInfo, setServerInfo] =
+    useState<ServerInfo | null>(null);
 
-  // ========================================================= FORMAT SIZE =========================================================
-    const formatSize=(bytes:number)=>{
-      if(bytes<1024){
-        return `${bytes} B`
-      }
-      if(bytes<1024*1024){
-        return `${(bytes/1024).toFixed(1)} KB`
-      }
-      if (bytes <1024 * 1024 * 1024) {
-      return `${(bytes /(1024 * 1024)).toFixed(1)} MB`;
+  const [serverStatus, setServerStatus] =
+    useState<ServerStatus | null>(null);
+
+  const [sharedFiles, setSharedFiles] =
+    useState<SharedFile[]>([]);
+
+  const [receivedFiles, setReceivedFiles] =
+    useState<ReceivedFile[]>([]);
+
+  const [loading, setLoading] = useState(false);
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [isServerStarted, setIsServerStarted] =
+    useState(false);
+
+  // =========================================================
+  // FORMAT SIZE
+  // =========================================================
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) {
+      return `${bytes} B`;
     }
-    
-    return `${(bytes /(1024 * 1024 *1024 )).toFixed(2)} GB`;
+
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
     }
 
+    if (bytes < 1024 * 1024 * 1024) {
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
 
-  // ========================================================= START LOCAL SHARE =========================================================
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  };
 
-  const handleShare = async () => {
+  // =========================================================
+  // FILE ICON
+  // =========================================================
+
+  const getFileIcon = (mimeType?: string | null) => {
+    if (mimeType?.startsWith('image/')) {
+      return '🖼️';
+    }
+
+    if (mimeType?.startsWith('video/')) {
+      return '🎬';
+    }
+
+    if (mimeType?.startsWith('audio/')) {
+      return '🎵';
+    }
+
+    if (mimeType === 'application/pdf') {
+      return '📕';
+    }
+
+    if (
+      mimeType?.includes('zip') ||
+      mimeType?.includes('rar') ||
+      mimeType?.includes('compressed')
+    ) {
+      return '🗜️';
+    }
+
+    return '📄';
+  };
+
+  // =========================================================
+  // RECEIVED FILE ICON
+  // =========================================================
+
+  const getReceivedFileIcon = (
+    category?: string,
+    mimeType?: string,
+  ) => {
+    const type = category?.toLowerCase();
+
+    if (type === 'images') {
+      return '🖼️';
+    }
+
+    if (type === 'videos') {
+      return '🎬';
+    }
+
+    if (type === 'audio') {
+      return '🎵';
+    }
+
+    if (type === 'archives') {
+      return '🗜️';
+    }
+
+    if (mimeType?.startsWith('image/')) {
+      return '🖼️';
+    }
+
+    if (mimeType?.startsWith('video/')) {
+      return '🎬';
+    }
+
+    if (mimeType?.startsWith('audio/')) {
+      return '🎵';
+    }
+
+    return '📄';
+  };
+
+  // =========================================================
+  // OPEN RECEIVED FILE
+  // =========================================================
+
+  const getFileOpenUri = (path: string) => {
+    if (
+      path.startsWith('content://') ||
+      path.startsWith('file://') ||
+      path.startsWith('http://') ||
+      path.startsWith('https://')
+    ) {
+      return path;
+    }
+
+    return `file://${path}`;
+  };
+
+  const openReceivedFile = async (file: ReceivedFile) => {
+    try {
+      const uri = getFileOpenUri(file.path);
+
+      // Let Android choose the appropriate installed application
+      // for the received file.
+      const canOpen = await Linking.canOpenURL(uri);
+
+      if (!canOpen) {
+        Alert.alert(
+          'Cannot Open File',
+          `No installed app can open "${file.name}".`,
+          [
+            {
+              text: 'Share',
+              onPress: async () => {
+                try {
+                  await Share.share({
+                    title: file.name,
+                    message: file.name,
+                    url: uri,
+                  });
+                } catch (shareError) {
+                  console.error(
+                    'SHARE RECEIVED FILE ERROR:',
+                    shareError,
+                  );
+                }
+              },
+            },
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+          ],
+        );
+        return;
+      }
+
+      await Linking.openURL(uri);
+    } catch (error) {
+      console.error('OPEN RECEIVED FILE ERROR:', error);
+
+      Alert.alert(
+        'Cannot Open File',
+        `Could not open "${file.name}".`,
+        [
+          {
+            text: 'Share',
+            onPress: async () => {
+              try {
+                const uri = getFileOpenUri(file.path);
+
+                await Share.share({
+                  title: file.name,
+                  message: file.name,
+                  url: uri,
+                });
+              } catch (shareError) {
+                console.error(
+                  'SHARE RECEIVED FILE ERROR:',
+                  shareError,
+                );
+              }
+            },
+          },
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+        ],
+      );
+    }
+  };
+
+  const handleReceivedFilePress = (file: ReceivedFile) => {
+    void openReceivedFile(file);
+  };
+
+  // =========================================================
+  // LOAD SERVER DATA
+  // =========================================================
+
+  const loadServerData = useCallback(async () => {
+    // =======================================================
+    // RECEIVED FILES
+    // =======================================================
+    // Received files are persistent local data. They must be
+    // loaded even when the local server is stopped.
+    try {
+      const received = await getLocalReceivedFiles();
+      setReceivedFiles(received);
+    } catch (error) {
+      console.error('LOAD RECEIVED FILES ERROR:', error);
+    }
+
+    // =======================================================
+    // SERVER STATUS
+    // =======================================================
+    try {
+      const status = await getLocalServerStatus();
+
+      setServerStatus(status);
+      setIsServerStarted(status.running);
+
+      if (status.running && status.ip && status.url) {
+        setServerInfo({
+          ip: status.ip,
+          port: status.port,
+          url: status.url,
+        });
+      } else {
+        setServerInfo(null);
+      }
+    } catch (error) {
+      console.error('LOAD SERVER STATUS ERROR:', error);
+      setIsServerStarted(false);
+      setServerInfo(null);
+    }
+
+    // =======================================================
+    // SHARED FILES
+    // =======================================================
+    try {
+      const files = await getLocalSharedFiles();
+      setSharedFiles(files);
+    } catch (error) {
+      console.error('LOAD SHARED FILES ERROR:', error);
+    }
+  }, []);
+
+  // =========================================================
+  // INITIAL LOAD
+  // =========================================================
+
+  useEffect(() => {
+    void loadServerData();
+  }, [loadServerData]);
+
+  // =========================================================
+  // RELOAD WHEN APP BECOMES ACTIVE
+  // =========================================================
+  // This is important for persistent received files. If the
+  // server was stopped while the screen/app was in the
+  // background, refresh the local file list when the user
+  // returns to DropLink.
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener(
+      'change',
+      nextState => {
+        if (nextState === 'active') {
+          void loadServerData();
+        }
+      },
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }, [loadServerData]);
+
+  // =========================================================
+  // AUTO REFRESH WHILE SERVER IS RUNNING
+  // =========================================================
+  //
+  // This keeps the received-file list current while another
+  // device is uploading files to this phone.
+  //
+  // The server is NOT restarted and the IP/port do not change.
+  // When the server is stopped, polling is automatically removed.
+  //
+
+  useEffect(() => {
+    if (!isServerStarted) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void loadServerData();
+    }, 2000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [isServerStarted, loadServerData]);
+
+  // =========================================================
+  // REFRESH
+  // =========================================================
+
+  const handleRefresh = async () => {
+    try {
+      setRefreshing(true);
+      await loadServerData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // =========================================================
+  // SELECT / ADD FILES
+  // =========================================================
+
+  const handleSelectFiles = async () => {
+    if (loading) {
+      return;
+    }
 
     try {
       setLoading(true);
-      /** Check network first.*/
-      const network = await getNetworkInfo()
-      console.log('NETWORK INFO:',network);
-      setNetworkInfo(network);
-      if ( !network.connected ) {
-        Alert.alert('No Network','Please connect to a network before sharing.' );
+
+      // -----------------------------------------------------
+      // NETWORK
+      // -----------------------------------------------------
+
+      const network = await getNetworkInfo();
+
+      if (!network.connected) {
+        Alert.alert(
+          'No Network',
+          'Please connect to a Wi-Fi network before sharing.',
+        );
+
         return;
       }
 
+      // -----------------------------------------------------
+      // PICK FILES
+      // -----------------------------------------------------
 
-      /** Select files.  */
       const files = await pickFiles();
-      if (files.length === 0 ) {
+
+      if (!files.length) {
         return;
       }
-      console.log('SELECTED FILES:', files);
-      setSelectedFiles(files);
-      /** Start Local Share server. The server now supports:
-       * GET  /download
-       * POST /upload
-       * Therefore the browser can
-       * both download and upload.
-       */
-      const info =await startLocalServer(files);
-      console.log( 'SERVER INFO:', info  );
-      setServerInfo(info);
-      Alert.alert( 'DropLink Ready', 'Your device can now send and receive files.\n\n' + info.url  );
+
+      // -----------------------------------------------------
+      // START NEW SERVER
+      // -----------------------------------------------------
+
+      if (!isServerStarted) {
+        const info = await startLocalServer(files);
+
+        setServerInfo(info);
+
+        setIsServerStarted(true);
+
+        await loadServerData();
+
+        Alert.alert(
+          'DropLink Ready',
+          `Your device can now send and receive files.\n\n${info.url}`,
+        );
+
+        return;
+      }
+
+      // -----------------------------------------------------
+      // SERVER ALREADY RUNNING
+      // -----------------------------------------------------
+
+      const existingUris = new Set(
+        sharedFiles.map(file => file.uri),
+      );
+
+      const newFiles = files.filter(
+        file => !existingUris.has(file.uri),
+      );
+
+      if (!newFiles.length) {
+        Alert.alert(
+          'Already Added',
+          'All selected files are already being shared.',
+        );
+
+        return;
+      }
+
+      // -----------------------------------------------------
+      // ADD WITHOUT STOPPING SERVER
+      // -----------------------------------------------------
+
+      await addLocalShareFiles(newFiles);
+
+      // Refresh native list so downloadCount/index/etc.
+      // always come from the native server.
+      await loadServerData();
+
+      Alert.alert(
+        'Files Added',
+        `${newFiles.length} ${
+          newFiles.length === 1
+            ? 'file has'
+            : 'files have'
+        } been added to the running server.`,
+      );
     } catch (error) {
-      console.error('SHARE ERROR:', error );
-      Alert.alert('Share Error', String(error) );
-     } finally {
+      console.error('FILE SHARE ERROR:', error);
+
+      Alert.alert(
+        'Share Error',
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    } finally {
       setLoading(false);
     }
   };
 
-// =========================================================
-// STOP SERVER
-// =========================================================
+  // =========================================================
+  // STOP SERVER
+  // =========================================================
 
-const handleStop = async () => {
-  try {
-    await stopLocalServer();
+  const handleStop = async () => {
+    try {
+      setLoading(true);
 
-    setServerInfo(null);
+      await stopLocalServer();
 
-    console.log('SERVER STOPPED');
-  } catch (error) {
-    console.error('STOP SERVER ERROR:', error);
+      setServerInfo(null);
+      setServerStatus(null);
+      setSharedFiles([]);
+      setIsServerStarted(false);
 
-    Alert.alert('Error', String(error));
-  }
-};
-// =========================================================
-// SHARE URL
-// =========================================================
+      // NEVER clear receivedFiles here.
+      // They are persisted files and must remain visible when the
+      // server is not running.
+      try {
+        const received = await getLocalReceivedFiles();
+        setReceivedFiles(received);
+      } catch (error) {
+        console.error('LOAD RECEIVED FILES AFTER STOP ERROR:', error);
+      }
+    } catch (error) {
+      console.error('STOP SERVER ERROR:', error);
 
-const handleShareUrl = async () => {
-  if (!serverInfo?.url) {
-    return;
-  }
+      Alert.alert(
+        'Error',
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  try {
-    await Share.share({
-      message: `Send and receive files with DropLink:\n${serverInfo.url}`,
-      url: serverInfo.url,
-    });
-  } catch (error) {
-    console.error('SHARE URL ERROR:', error);
+  // =========================================================
+  // SHARE URL
+  // =========================================================
 
-    Alert.alert('Share Error', String(error));
-  }
-};
+  const handleShareUrl = async () => {
+    if (!serverInfo?.url) {
+      return;
+    }
 
-// =========================================================
-// TOTAL SIZE
-// =========================================================
+    try {
+      await Share.share({
+        message:
+          `Send and receive files with DropLink:\n` +
+          serverInfo.url,
+        url: serverInfo.url,
+      });
+    } catch (error) {
+      console.error('SHARE URL ERROR:', error);
 
-const totalSize = selectedFiles.reduce(
-  (total, file) => total + (file.size ?? 0),
-  0
-);
+      Alert.alert(
+        'Share Error',
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
+  };
 
-// =========================================================
-// FILE ICON
-// =========================================================
+  // =========================================================
+  // TOTAL SHARED SIZE
+  // =========================================================
 
-const getFileIcon = (mimeType?: string | null) => {
-  if (mimeType?.startsWith('image/')) {
-    return '🖼️';
-  }
+  const totalSharedSize = sharedFiles.reduce(
+    (total, file) => total + (file.size || 0),
+    0,
+  );
 
-  if (mimeType?.startsWith('video/')) {
-    return '🎬';
-  }
+  // =========================================================
+  // TOTAL RECEIVED SIZE
+  // =========================================================
 
-  if (mimeType?.startsWith('audio/')) {
-    return '🎵';
-  }
-
-  if (mimeType === 'application/pdf') {
-    return '📕';
-  }
-
-  if (
-    mimeType?.includes('zip') ||
-    mimeType?.includes('rar') ||
-    mimeType?.includes('compressed')
-  ) {
-    return '🗜️';
-  }
-
-  return '📄';
-};
+  const totalReceivedSize = receivedFiles.reduce(
+    (total, file) => total + (file.size || 0),
+    0,
+  );
 
   // =========================================================
   // UI
   // =========================================================
 
   return (
-
     <ScrollView
-  style={styles.screen}
-  contentContainerStyle={styles.container}
-  showsVerticalScrollIndicator={false}
->
-  {/* ================================================= */}
-  {/* HEADER */}
-  {/* ================================================= */}
+      style={styles.screen}
+      contentContainerStyle={styles.container}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+        />
+      }
+    >
+      {/* ================================================= */}
+      {/* HEADER */}
+      {/* ================================================= */}
 
-  <View style={styles.header}>
-    <View>
-      <Text style={styles.title}>Local Share</Text>
+      {!isServerStarted && (
+        <View style={styles.header}>
+          <View style={styles.headerText}>
+            <Text style={styles.title}>
+              Local Share
+            </Text>
 
-      <Text style={styles.subtitle}>
-        Fast file sharing on your network
-      </Text>
-    </View>
-
-    <View style={styles.iconBox}>
-      <Text style={styles.iconText}>📡</Text>
-    </View>
-  </View>
-
-  {/* ================================================= */}
-  {/* HERO */}
-  {/* ================================================= */}
-
-  {!serverInfo && (
-    <View style={styles.heroCard}>
-      <View style={styles.heroIcon}>
-        <Text style={styles.heroIconText}>⚡</Text>
-      </View>
-
-      <Text style={styles.heroTitle}>
-        Direct Device Sharing
-      </Text>
-
-      <Text style={styles.heroText}>
-        Select files and share them directly with another device
-        connected to the same network.
-        {'\n\n'}
-        The other device can both download your files and upload
-        files to your device.
-      </Text>
-
-      <View style={styles.featureRow}>
-        <View style={styles.feature}>
-          <Text style={styles.featureIcon}>⚡</Text>
-          <Text style={styles.featureText}>Fast</Text>
-        </View>
-
-        <View style={styles.feature}>
-          <Text style={styles.featureIcon}>↕️</Text>
-          <Text style={styles.featureText}>
-            Send & Receive
-          </Text>
-        </View>
-
-        <View style={styles.feature}>
-          <Text style={styles.featureIcon}>🔒</Text>
-          <Text style={styles.featureText}>Direct</Text>
-        </View>
-      </View>
-    </View>
-  )}
-
-  {/* ================================================= */}
-  {/* SELECT BUTTON */}
-  {/* ================================================= */}
-
-  <Pressable
-    style={[
-      styles.selectButton,
-      loading && styles.disabledButton,
-    ]}
-    onPress={handleShare}
-    disabled={loading}
-  >
-    <View style={styles.selectIcon}>
-      <Text style={styles.selectIconText}>+</Text>
-    </View>
-
-    <View style={styles.selectContent}>
-      <Text style={styles.selectTitle}>
-        {loading ? 'Starting Server...' : 'Select & Share'}
-      </Text>
-
-      <Text style={styles.selectSubtitle}>
-        Choose photos, videos or documents
-      </Text>
-    </View>
-
-    <Text style={styles.arrow}>›</Text>
-  </Pressable>
-
-  {/* ================================================= */}
-  {/* NETWORK */}
-  {/* ================================================= */}
-
-  {networkInfo && (
-    <View style={styles.networkCard}>
-      <View style={styles.networkHeader}>
-        <View style={styles.networkLeft}>
-          <View
-            style={[
-              styles.networkDot,
-              !networkInfo.connected && styles.networkDotOff,
-            ]}
-          />
-
-          <View>
-            <Text style={styles.networkTitle}>Network</Text>
-
-            <Text style={styles.networkStatus}>
-              {networkInfo.connected
-                ? 'Connected'
-                : 'Disconnected'}
+            <Text style={styles.subtitle}>
+              Fast file sharing on your network
             </Text>
           </View>
-        </View>
 
-        <View style={styles.networkBadge}>
-          <Text style={styles.networkBadgeText}>
-            {networkInfo.type}
-          </Text>
-        </View>
-      </View>
-
-      {networkInfo.ip && (
-        <View style={styles.ipBox}>
-          <Text style={styles.ipLabel}>DEVICE ADDRESS</Text>
-
-          <Text style={styles.ipText} selectable>
-            {networkInfo.ip}
-          </Text>
+          <View style={styles.iconBox}>
+            <Text style={styles.iconText}>
+              📡
+            </Text>
+          </View>
         </View>
       )}
-    </View>
-  )}
 
-  {/* ================================================= */}
-  {/* SELECTED FILES */}
-  {/* ================================================= */}
+      {/* ================================================= */}
+      {/* SERVER CARD */}
+      {/* ================================================= */}
 
-  {selectedFiles.length > 0 && (
-    <View style={styles.filesCard}>
-      <View style={styles.filesHeader}>
-        <View>
-          <Text style={styles.filesTitle}>Shared Files</Text>
+      {serverInfo && (
+        <View style={styles.serverCard}>
 
-          <Text style={styles.filesSubtitle}>
-            {selectedFiles.length}{' '}
-            {selectedFiles.length === 1 ? 'file' : 'files'}
-          </Text>
-        </View>
+          {/* SERVER HEADER */}
 
-        <View style={styles.sizeBadge}>
-          <Text style={styles.sizeBadgeText}>
-            {formatSize(totalSize)}
-          </Text>
-        </View>
-      </View>
+          <View style={styles.serverHeader}>
 
-      {selectedFiles.map((file, index) => (
-        <View
-          key={`${file.uri}-${index}`}
-          style={styles.fileRow}
-        >
-          <View style={styles.fileIcon}>
-            <Text style={styles.fileIconText}>
-              {getFileIcon(file.mimeType)}
-            </Text>
+            {/* LEFT */}
+
+            <View style={styles.serverIdentity}>
+              <View style={styles.serverDot} />
+
+              <View style={styles.serverIdentityText}>
+                <Text
+                  style={styles.serverTitle}
+                  numberOfLines={1}
+                >
+                  Server Running
+                </Text>
+
+                <Text
+                  style={styles.serverSubtitle}
+                  numberOfLines={1}
+                >
+                  Ready to send & receive
+                </Text>
+              </View>
+            </View>
+
+            {/* RIGHT */}
+
+            <View style={styles.serverStatus}>
+
+              <View style={styles.networkInfo}>
+                <Text style={styles.infoLabel}>
+                  IP ADDRESS
+                </Text>
+
+                <Text
+                  style={styles.infoValue}
+                  numberOfLines={1}
+                >
+                  {serverInfo.ip}
+                </Text>
+              </View>
+
+              <View style={styles.networkInfo}>
+                <Text style={styles.infoLabel}>
+                  PORT
+                </Text>
+
+                <Text style={styles.infoValue}>
+                  {serverInfo.port}
+                </Text>
+              </View>
+
+              <View style={styles.liveBadge}>
+                <View style={styles.liveDot} />
+
+                <Text style={styles.liveText}>
+                  LIVE
+                </Text>
+              </View>
+
+            </View>
           </View>
 
-          <View style={styles.fileInfo}>
+          {/* URL */}
+
+          <Text style={styles.urlLabel}>
+            SHARE URL
+          </Text>
+
+          <View style={styles.urlBox}>
             <Text
-              style={styles.fileName}
+              style={styles.urlText}
+              selectable
               numberOfLines={1}
             >
-              {file.name}
-            </Text>
-
-            <Text style={styles.fileSize}>
-              {formatSize(file.size ?? 0)}
+              {serverInfo.url}
             </Text>
           </View>
-        </View>
-      ))}
-    </View>
-  )}
 
-  {/* ================================================= */}
-  {/* SERVER */}
-  {/* ================================================= */}
+          {/* SHARE URL */}
 
-  {serverInfo && (
-    <View style={styles.serverCard}>
-      <View style={styles.serverHeader}>
-        <View style={styles.serverLeft}>
-          <View style={styles.serverDot} />
-
-          <View>
-            <Text style={styles.serverTitle}>
-              Server Running
+          <Pressable
+            style={styles.shareUrlButton}
+            onPress={handleShareUrl}
+          >
+            <Text style={styles.shareUrlButtonText}>
+              ↗ Share URL
             </Text>
+          </Pressable>
 
-            <Text style={styles.serverSubtitle}>
-              Ready to send & receive files
-            </Text>
+          {/* SERVER STATS */}
+
+          <View style={styles.statsRow}>
+
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>
+                {sharedFiles.length}
+              </Text>
+
+              <Text style={styles.statLabel}>
+                Shared
+              </Text>
+            </View>
+
+            <View style={styles.statDivider} />
+
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>
+                {receivedFiles.length}
+              </Text>
+
+              <Text style={styles.statLabel}>
+                Received
+              </Text>
+            </View>
+
+            <View style={styles.statDivider} />
+
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>
+                {sharedFiles.reduce(
+                  (total, file) =>
+                    total + file.downloadCount,
+                  0,
+                )}
+              </Text>
+
+              <Text style={styles.statLabel}>
+                Downloads
+              </Text>
+            </View>
+
           </View>
-        </View>
 
-        <View style={styles.liveBadge}>
-          <Text style={styles.liveText}>LIVE</Text>
-        </View>
-      </View>
+          {/* STOP */}
 
-      {/* ================================================= */}
-      {/* SEND & RECEIVE STATUS */}
-      {/* ================================================= */}
-
-      <View style={styles.directionRow}>
-        <View style={styles.directionCard}>
-          <Text style={styles.directionIcon}>↓</Text>
-
-          <View>
-            <Text style={styles.directionTitle}>
-              Receive
+          <Pressable
+            style={styles.stopButton}
+            onPress={handleStop}
+            disabled={loading}
+          >
+            <Text style={styles.stopButtonText}>
+              ■ Stop Server
             </Text>
-
-            <Text style={styles.directionText}>
-              Browser can upload
-            </Text>
-          </View>
+          </Pressable>
         </View>
-
-        <View style={styles.directionCard}>
-          <Text style={styles.directionIcon}>↑</Text>
-
-          <View>
-            <Text style={styles.directionTitle}>Send</Text>
-
-            <Text style={styles.directionText}>
-              Browser can download
-            </Text>
-          </View>
-        </View>
-      </View>
+      )}
 
       {/* ================================================= */}
-      {/* URL */}
+      {/* SELECT / ADD FILES */}
       {/* ================================================= */}
-
-      <Text style={styles.urlLabel}>SHARE URL</Text>
-
-      <View style={styles.urlBox}>
-        <Text style={styles.urlText} selectable>
-          {serverInfo.url}
-        </Text>
-      </View>
 
       <Pressable
-        style={styles.shareUrlButton}
-        onPress={handleShareUrl}
+        style={[
+          styles.selectButton,
+          loading && styles.disabledButton,
+        ]}
+        onPress={handleSelectFiles}
+        disabled={loading}
       >
-        <Text style={styles.shareUrlButtonText}>
-          ↗ Share URL
+        <View style={styles.selectIcon}>
+          <Text style={styles.selectIconText}>
+            +
+          </Text>
+        </View>
+
+        <View style={styles.selectContent}>
+          <Text style={styles.selectTitle}>
+            {loading
+              ? isServerStarted
+                ? 'Adding Files...'
+                : 'Starting Server...'
+              : isServerStarted
+                ? 'Add More Files'
+                : 'Select & Share'}
+          </Text>
+
+          <Text style={styles.selectSubtitle}>
+            {isServerStarted
+              ? 'Add files without stopping the server'
+              : 'Choose photos, videos or documents'}
+          </Text>
+        </View>
+
+        <Text style={styles.arrow}>
+          ›
         </Text>
       </Pressable>
 
       {/* ================================================= */}
-      {/* SERVER INFO */}
+      {/* SHARED FILES */}
       {/* ================================================= */}
 
-      <View style={styles.serverInfoRow}>
-        <View>
-          <Text style={styles.infoLabel}>IP ADDRESS</Text>
+      {sharedFiles.length > 0 && (
+        <View style={styles.filesCard}>
 
-          <Text style={styles.infoValue}>
-            {serverInfo.ip}
-          </Text>
+          <View style={styles.filesHeader}>
+            <View>
+              <Text style={styles.filesTitle}>
+                Shared Files
+              </Text>
+
+              <Text style={styles.filesSubtitle}>
+                {sharedFiles.length}{' '}
+                {sharedFiles.length === 1
+                  ? 'file'
+                  : 'files'}
+                {' • '}
+                {formatSize(totalSharedSize)}
+              </Text>
+            </View>
+
+            <View style={styles.sizeBadge}>
+              <Text style={styles.sizeBadgeText}>
+                {sharedFiles.reduce(
+                  (total, file) =>
+                    total + file.downloadCount,
+                  0,
+                )}{' '}
+                downloads
+              </Text>
+            </View>
+          </View>
+
+          {sharedFiles.map(file => (
+            <View
+              key={`${file.index}-${file.uri}`}
+              style={styles.fileRow}
+            >
+              <View style={styles.fileIcon}>
+                <Text style={styles.fileIconText}>
+                  {getFileIcon(file.mimeType)}
+                </Text>
+              </View>
+
+              <View style={styles.fileInfo}>
+                <Text
+                  style={styles.fileName}
+                  numberOfLines={1}
+                >
+                  {file.name}
+                </Text>
+
+                <View style={styles.fileMeta}>
+                  <Text style={styles.fileSize}>
+                    {formatSize(file.size)}
+                  </Text>
+
+                  <Text style={styles.downloadCount}>
+                    ↓ {file.downloadCount}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ))}
         </View>
+      )}
 
-        <View>
-          <Text style={styles.infoLabel}>PORT</Text>
+      {/* ================================================= */}
+      {/* RECEIVED FILES */}
+      {/* ================================================= */}
 
-          <Text style={styles.infoValue}>
-            {serverInfo.port}
-          </Text>
+      {receivedFiles.length > 0 && (
+        <View style={styles.receivedCard}>
+
+          <View style={styles.filesHeader}>
+            <View>
+              <Text style={styles.filesTitle}>
+                {isServerStarted
+                  ? 'Received Files'
+                  : 'Recently Received'}
+              </Text>
+
+              <Text style={styles.filesSubtitle}>
+                {receivedFiles.length}{' '}
+                {receivedFiles.length === 1
+                  ? 'file'
+                  : 'files'}
+                {' • '}
+                {formatSize(totalReceivedSize)}
+                {!isServerStarted ? ' • Saved on device' : ''}
+              </Text>
+            </View>
+
+            <View style={styles.receivedBadge}>
+              <Text style={styles.receivedBadgeText}>
+                {isServerStarted ? 'RECEIVED' : 'RECENT'}
+              </Text>
+            </View>
+          </View>
+
+          {receivedFiles.map((file, index) => (
+            <Pressable
+              key={`${file.path}-${index}`}
+              style={styles.receivedFilePressable}
+              onPress={() => handleReceivedFilePress(file)}
+              android_ripple={{ color: '#d1fae5' }}
+            >
+              <View style={styles.receivedIcon}>
+                <Text style={styles.fileIconText}>
+                  {getReceivedFileIcon(
+                    file.category,
+                    file.mimeType,
+                  )}
+                </Text>
+              </View>
+
+              <View style={styles.fileInfo}>
+                <Text
+                  style={styles.fileName}
+                  numberOfLines={1}
+                >
+                  {file.name}
+                </Text>
+
+                <Text style={styles.fileSize}>
+                  {formatSize(file.size)}
+                </Text>
+
+                <Text
+                  style={styles.fileCategory}
+                  numberOfLines={1}
+                >
+                  {file.category}
+                </Text>
+              </View>
+
+              <View style={styles.receivedOpenButton}>
+                <Text style={styles.receivedOpenButtonText}>
+                  ›
+                </Text>
+              </View>
+            </Pressable>
+          ))}
         </View>
-      </View>
+      )}
 
       {/* ================================================= */}
-      {/* STOP */}
+      {/* EMPTY STATE */}
       {/* ================================================= */}
 
-      <Pressable
-        style={styles.stopButton}
-        onPress={handleStop}
-      >
-        <Text style={styles.stopButtonText}>
-          ■ Stop Server
+      {!isServerStarted &&
+        sharedFiles.length === 0 &&
+        receivedFiles.length === 0 && (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyIcon}>
+              📁
+            </Text>
+
+            <Text style={styles.emptyTitle}>
+              No received files yet
+            </Text>
+
+            <Text style={styles.emptyText}>
+              Received files will stay here even after
+              the server is stopped.
+            </Text>
+          </View>
+        )}
+
+      {/* ================================================= */}
+      {/* INFO */}
+      {/* ================================================= */}
+
+      <View style={styles.infoNote}>
+        <Text style={styles.infoIcon}>
+          ℹ
         </Text>
-      </Pressable>
-    </View>
-  )}
 
-  {/* ================================================= */}
-  {/* INFORMATION */}
-  {/* ================================================= */}
-
-  <View style={styles.infoNote}>
-    <Text style={styles.infoIcon}>ℹ</Text>
-
-    <Text style={styles.infoText}>
-      Keep this screen open while another device is connected.
-      The browser can download your shared files and upload
-      files directly to this device.
-    </Text>
-  </View>
-</ScrollView>
+        <Text style={styles.infoText}>
+          Keep this screen open while another device
+          is connected. Devices can download your
+          shared files and upload files directly to
+          this device.
+        </Text>
+      </View>
+    </ScrollView>
   );
 }
 
@@ -491,15 +1000,19 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
 
-  // -------------------------------------------------------
+  // =======================================================
   // HEADER
-  // -------------------------------------------------------
+  // =======================================================
 
   header: {
     marginTop: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+
+  headerText: {
+    flex: 1,
   },
 
   title: {
@@ -517,6 +1030,7 @@ const styles = StyleSheet.create({
   iconBox: {
     width: 50,
     height: 50,
+    marginLeft: 15,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
@@ -527,81 +1041,194 @@ const styles = StyleSheet.create({
     fontSize: 24,
   },
 
-  // -------------------------------------------------------
-  // HERO
-  // -------------------------------------------------------
+  // =======================================================
+  // SERVER
+  // =======================================================
 
-  heroCard: {
-    marginTop: 25,
-    padding: 24,
-    borderRadius: 24,
-    backgroundColor: '#eff6ff',
-    alignItems: 'center',
-  },
-
-  heroIcon: {
-    width: 70,
-    height: 70,
+  serverCard: {
+    marginTop: 18,
+    padding: 18,
     borderRadius: 22,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+
+  serverHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#2563eb',
+    justifyContent: 'space-between',
   },
 
-  heroIconText: {
-    color: '#fff',
-    fontSize: 34,
+  serverIdentity: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 8,
   },
 
-  heroTitle: {
-    marginTop: 16,
-    fontSize: 21,
+  serverIdentityText: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  serverDot: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    marginRight: 10,
+    backgroundColor: '#10b981',
+  },
+
+  serverTitle: {
+    fontSize: 17,
     fontWeight: '800',
     color: '#111827',
   },
 
-  heroText: {
-    marginTop: 9,
-    textAlign: 'center',
-    lineHeight: 21,
-    fontSize: 14,
+  serverSubtitle: {
+    marginTop: 3,
+    fontSize: 11,
     color: '#6b7280',
   },
 
-  featureRow: {
-    width: '100%',
-    marginTop: 22,
+  serverStatus: {
+    flexShrink: 0,
     flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-
-  feature: {
     alignItems: 'center',
   },
 
-  featureIcon: {
-    fontSize: 19,
+  networkInfo: {
+    alignItems: 'flex-end',
+    marginLeft: 8,
   },
 
-  featureText: {
-    marginTop: 5,
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#4b5563',
-    textAlign: 'center',
+  infoLabel: {
+    fontSize: 7,
+    fontWeight: '800',
+    color: '#9ca3af',
   },
 
-  // -------------------------------------------------------
+  infoValue: {
+    marginTop: 2,
+    maxWidth: 90,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#374151',
+  },
+
+  liveBadge: {
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#d1fae5',
+  },
+
+  liveDot: {
+    width: 5,
+    height: 5,
+    marginRight: 4,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
+  },
+
+  liveText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#047857',
+  },
+
+  // =======================================================
+  // URL
+  // =======================================================
+
+  urlLabel: {
+    marginTop: 18,
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#9ca3af',
+  },
+
+  urlBox: {
+    marginTop: 7,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+
+  urlText: {
+    fontSize: 13,
+    color: '#2563eb',
+  },
+
+  shareUrlButton: {
+    marginTop: 10,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#2563eb',
+  },
+
+  shareUrlButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
+  // =======================================================
+  // SERVER STATS
+  // =======================================================
+
+  statsRow: {
+    marginTop: 15,
+    paddingVertical: 12,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+  },
+
+  statItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+
+  statValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#111827',
+  },
+
+  statLabel: {
+    marginTop: 2,
+    fontSize: 10,
+    color: '#6b7280',
+  },
+
+  statDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: '#e5e7eb',
+  },
+
+  // =======================================================
   // SELECT
-  // -------------------------------------------------------
+  // =======================================================
 
   selectButton: {
     marginTop: 18,
     padding: 17,
     borderRadius: 18,
-    backgroundColor: '#2563eb',
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#2563eb',
   },
 
   selectIcon: {
@@ -614,17 +1241,18 @@ const styles = StyleSheet.create({
   },
 
   selectIconText: {
-    color: '#fff',
+    color: '#ffffff',
     fontSize: 28,
   },
 
   selectContent: {
     flex: 1,
+    minWidth: 0,
     marginLeft: 13,
   },
 
   selectTitle: {
-    color: '#fff',
+    color: '#ffffff',
     fontSize: 17,
     fontWeight: '800',
   },
@@ -636,7 +1264,8 @@ const styles = StyleSheet.create({
   },
 
   arrow: {
-    color: '#fff',
+    marginLeft: 8,
+    color: '#ffffff',
     fontSize: 28,
   },
 
@@ -644,96 +1273,15 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
 
-  // -------------------------------------------------------
-  // NETWORK
-  // -------------------------------------------------------
-
-  networkCard: {
-    marginTop: 18,
-    padding: 18,
-    borderRadius: 20,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-
-  networkHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-
-  networkLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-
-  networkDot: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    marginRight: 10,
-    backgroundColor: '#10b981',
-  },
-
-  networkDotOff: {
-    backgroundColor: '#ef4444',
-  },
-
-  networkTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#111827',
-  },
-
-  networkStatus: {
-    marginTop: 2,
-    fontSize: 12,
-    color: '#6b7280',
-  },
-
-  networkBadge: {
-    maxWidth: 140,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: 9,
-    backgroundColor: '#eff6ff',
-  },
-
-  networkBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#2563eb',
-  },
-
-  ipBox: {
-    marginTop: 15,
-    padding: 12,
-    borderRadius: 11,
-    backgroundColor: '#f8fafc',
-  },
-
-  ipLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#9ca3af',
-  },
-
-  ipText: {
-    marginTop: 5,
-    fontSize: 13,
-    color: '#374151',
-  },
-
-  // -------------------------------------------------------
-  // FILES
-  // -------------------------------------------------------
+  // =======================================================
+  // SHARED FILES
+  // =======================================================
 
   filesCard: {
     marginTop: 18,
     padding: 18,
     borderRadius: 20,
-    backgroundColor: '#fff',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
@@ -758,14 +1306,14 @@ const styles = StyleSheet.create({
   },
 
   sizeBadge: {
-    paddingHorizontal: 11,
+    paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 10,
     backgroundColor: '#f3f4f6',
   },
 
   sizeBadgeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#374151',
   },
@@ -785,12 +1333,46 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3f4f6',
   },
 
+  receivedIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ecfdf5',
+  },
+
+  receivedFilePressable: {
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+  },
+
+  receivedOpenButton: {
+    width: 32,
+    height: 32,
+    marginLeft: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ecfdf5',
+  },
+
+  receivedOpenButtonText: {
+    fontSize: 24,
+    lineHeight: 28,
+    fontWeight: '600',
+    color: '#059669',
+  },
+
   fileIconText: {
     fontSize: 20,
   },
 
   fileInfo: {
     flex: 1,
+    minWidth: 0,
     marginLeft: 12,
   },
 
@@ -800,183 +1382,93 @@ const styles = StyleSheet.create({
     color: '#1f2937',
   },
 
-  fileSize: {
+  fileMeta: {
     marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  fileSize: {
     fontSize: 12,
     color: '#6b7280',
   },
 
-  // -------------------------------------------------------
-  // SERVER
-  // -------------------------------------------------------
+  downloadCount: {
+    marginLeft: 12,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
 
-  serverCard: {
+  // =======================================================
+  // RECEIVED
+  // =======================================================
+
+  receivedCard: {
     marginTop: 18,
     padding: 18,
-    borderRadius: 22,
-    backgroundColor: '#fff',
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#bbf7d0',
+    borderColor: '#d1fae5',
   },
 
-  serverHeader: {
-    flexDirection: 'row',
+  receivedBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 9,
+    backgroundColor: '#d1fae5',
+  },
+
+  receivedBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#047857',
+  },
+
+  fileCategory: {
+    marginTop: 3,
+    fontSize: 10,
+    color: '#10b981',
+    fontWeight: '600',
+  },
+
+  // =======================================================
+  // EMPTY
+  // =======================================================
+
+  emptyCard: {
+    marginTop: 18,
+    padding: 30,
+    borderRadius: 20,
     alignItems: 'center',
-    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
 
-  serverLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  emptyIcon: {
+    fontSize: 38,
   },
 
-  serverDot: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    marginRight: 10,
-    backgroundColor: '#10b981',
-  },
-
-  serverTitle: {
+  emptyTitle: {
+    marginTop: 10,
     fontSize: 17,
     fontWeight: '800',
     color: '#111827',
   },
 
-  serverSubtitle: {
-    marginTop: 3,
+  emptyText: {
+    marginTop: 5,
     fontSize: 12,
-    color: '#6b7280',
-  },
-
-  liveBadge: {
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 8,
-    backgroundColor: '#d1fae5',
-  },
-
-  liveText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#047857',
-  },
-
-  // -------------------------------------------------------
-  // SEND / RECEIVE
-  // -------------------------------------------------------
-
-  directionRow: {
-    marginTop: 16,
-    flexDirection: 'row',
-    gap: 10,
-  },
-
-  directionCard: {
-    flex: 1,
-    minHeight: 72,
-    padding: 12,
-    borderRadius: 14,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-
-  directionIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
+    lineHeight: 18,
     textAlign: 'center',
-    lineHeight: 34,
-    fontSize: 22,
-    fontWeight: '800',
-    backgroundColor: '#dbeafe',
-    color: '#2563eb',
-    marginRight: 9,
-  },
-
-  directionTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#111827',
-  },
-
-  directionText: {
-    marginTop: 3,
-    fontSize: 10,
     color: '#6b7280',
   },
 
-  // -------------------------------------------------------
-  // URL
-  // -------------------------------------------------------
-
-  urlLabel: {
-    marginTop: 18,
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#9ca3af',
-  },
-
-  urlBox: {
-    marginTop: 7,
-    padding: 13,
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-
-  urlText: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: '#2563eb',
-  },
-
-  shareUrlButton: {
-    marginTop: 10,
-    paddingVertical: 13,
-    borderRadius: 12,
-    alignItems: 'center',
-    backgroundColor: '#2563eb',
-  },
-
-  shareUrlButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-
-  // -------------------------------------------------------
-  // SERVER INFO
-  // -------------------------------------------------------
-
-  serverInfoRow: {
-    marginTop: 15,
-    flexDirection: 'row',
-    gap: 30,
-  },
-
-  infoLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#9ca3af',
-  },
-
-  infoValue: {
-    marginTop: 4,
-    maxWidth: 190,
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
-  },
-
-  // -------------------------------------------------------
+  // =======================================================
   // STOP
-  // -------------------------------------------------------
+  // =======================================================
 
   stopButton: {
     marginTop: 16,
@@ -992,9 +1484,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  // -------------------------------------------------------
+  // =======================================================
   // INFO
-  // -------------------------------------------------------
+  // =======================================================
 
   infoNote: {
     marginTop: 18,

@@ -1,0 +1,838 @@
+
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+>
+
+<title>DropLink</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 20px;
+    font-family: Arial, sans-serif;
+    background: #f5f7fb;
+    color: #111827;
+}
+
+.container {
+    max-width: 720px;
+    margin: auto;
+}
+
+.header {
+    background: #2563eb;
+    color: white;
+    padding: 28px;
+    border-radius: 22px;
+    margin-bottom: 20px;
+}
+
+.header h1 {
+    margin: 0;
+    font-size: 28px;
+}
+
+.header p {
+    margin-top: 8px;
+    opacity: .9;
+}
+
+.card {
+    background: white;
+    border-radius: 18px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow:
+        0 2px 10px rgba(0,0,0,.05);
+}
+
+.card-title {
+    font-size: 19px;
+    font-weight: 800;
+    margin-bottom: 14px;
+}
+
+.file {
+    background: #f8fafc;
+    border-radius: 14px;
+    padding: 15px;
+    margin-bottom: 10px;
+}
+
+.file-name {
+    font-weight: bold;
+    word-break: break-word;
+}
+
+.file-size {
+    color: #6b7280;
+    margin-top: 5px;
+}
+
+.file-downloads {
+    color: #2563eb;
+    margin-top: 5px;
+    font-size: 13px;
+}
+
+.download {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 10px 16px;
+    border-radius: 10px;
+    background: #2563eb;
+    color: white;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+input[type=file] {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 12px;
+    background: white;
+}
+
+.upload-button {
+    width: 100%;
+    margin-top: 12px;
+    padding: 13px;
+    border: none;
+    border-radius: 12px;
+    background: #10b981;
+    color: white;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.upload-button:disabled {
+    opacity: .6;
+}
+
+.status {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: 10px;
+    background: #f3f4f6;
+    font-size: 13px;
+}
+
+.progress {
+    width: 100%;
+    height: 10px;
+    margin-top: 10px;
+    border-radius: 10px;
+    background: #e5e7eb;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #10b981;
+}
+
+.received-file {
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 10px;
+}
+
+.received-category {
+    display: inline-block;
+    margin-top: 7px;
+    padding: 4px 8px;
+    border-radius: 7px;
+    background: #d1fae5;
+    color: #047857;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.empty {
+    color: #6b7280;
+    font-size: 13px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="header">
+
+<h1>DropLink</h1>
+
+<p>
+Send and receive files directly.
+</p>
+
+</div>
+
+<div class="card">
+
+<div class="card-title">
+Send files to this device
+</div>
+
+<input
+    id="files"
+    type="file"
+    multiple
+>
+
+<button
+    id="uploadButton"
+    class="upload-button"
+    onclick="uploadFiles()"
+>
+Upload Files
+</button>
+
+<div
+    id="status"
+    class="status"
+>
+Select files to upload.
+</div>
+
+</div>
+
+<div class="card">
+
+<div class="card-title">
+Files available from this device
+</div>
+
+
+{{SHARED_FILES}}
+
+
+</div>
+
+<div class="card">
+
+<div class="card-title">
+Files received by this device
+</div>
+
+<div id="receivedFiles">
+
+<div class="empty">
+Checking received files...
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<script>
+
+function formatSize(bytes) {
+
+    bytes = Number(bytes) || 0;
+
+    if (bytes < 1024) {
+        return bytes.toFixed(0) + " B";
+    }
+
+    if (bytes < 1024 * 1024) {
+        return (
+            bytes / 1024
+        ).toFixed(1) + " KB";
+    }
+
+    if (
+        bytes <
+        1024 * 1024 * 1024
+    ) {
+
+        return (
+            bytes /
+            (1024 * 1024)
+        ).toFixed(1) + " MB";
+    }
+
+    return (
+        bytes /
+        (1024 * 1024 * 1024)
+    ).toFixed(2) + " GB";
+}
+
+
+function formatSpeed(
+    bytesPerSecond
+) {
+
+    return (
+        formatSize(
+            bytesPerSecond
+        ) + "/s"
+    );
+}
+
+
+function formatTime(
+    seconds
+) {
+
+    seconds =
+        Math.max(
+            0,
+            Math.floor(
+                Number(seconds) || 0
+            )
+        );
+
+    const hours =
+        Math.floor(
+            seconds / 3600
+        );
+
+    const minutes =
+        Math.floor(
+            (seconds % 3600) / 60
+        );
+
+    const secs =
+        seconds % 60;
+
+    if (hours > 0) {
+
+        return (
+            String(hours).padStart(2, "0") +
+            ":" +
+            String(minutes).padStart(2, "0") +
+            ":" +
+            String(secs).padStart(2, "0")
+        );
+    }
+
+    return (
+        String(minutes).padStart(2, "0") +
+        ":" +
+        String(secs).padStart(2, "0")
+    );
+}
+
+
+function uploadFiles() {
+
+    const input =
+        document.getElementById(
+            "files"
+        );
+
+    const button =
+        document.getElementById(
+            "uploadButton"
+        );
+
+    const status =
+        document.getElementById(
+            "status"
+        );
+
+    const files =
+        input.files;
+
+    if (
+        !files ||
+        files.length === 0
+    ) {
+
+        status.innerText =
+            "Please select a file.";
+
+        return;
+    }
+
+    button.disabled = true;
+
+    uploadNext(
+        files,
+        0,
+        button,
+        status
+    );
+}
+
+
+function uploadNext(
+    files,
+    index,
+    button,
+    status
+) {
+
+    if (
+        index >=
+        files.length
+    ) {
+
+        status.innerText =
+            "✓ All files uploaded successfully.";
+
+        button.disabled =
+            false;
+
+        loadReceivedFiles();
+
+        return;
+    }
+
+    const file =
+        files[index];
+
+    const total =
+        Number(file.size) || 0;
+
+    const startedAt =
+        Date.now();
+
+    status.innerHTML =
+        "Uploading <b>" +
+        escapeHtmlJs(
+            file.name
+        ) +
+        "</b>" +
+
+        "<br><br>" +
+
+        "<span id='uploadAmount'>" +
+        "0 B / " +
+        formatSize(total) +
+        "</span>" +
+
+        "<br>" +
+
+        "<span id='uploadPercent'>" +
+        "0.0%" +
+        "</span>" +
+
+        " · " +
+
+        "<span id='uploadSpeed'>" +
+        "0 B/s" +
+        "</span>" +
+
+        " · ETA " +
+
+        "<span id='uploadEta'>" +
+        "--:--" +
+        "</span>" +
+
+        "<div class='progress'>" +
+
+        "<div " +
+        "id='progressBar' " +
+        "class='progress-bar'>" +
+
+        "</div>" +
+
+        "</div>";
+
+
+    const xhr =
+        new XMLHttpRequest();
+
+
+    xhr.open(
+        "POST",
+        "/upload",
+        true
+    );
+
+
+    xhr.setRequestHeader(
+        "X-File-Name",
+        encodeURIComponent(
+            file.name
+        )
+    );
+
+
+    xhr.setRequestHeader(
+        "X-File-Type",
+        file.type ||
+        "application/octet-stream"
+    );
+
+
+    xhr.setRequestHeader(
+        "X-File-Size",
+        String(total)
+    );
+
+
+    xhr.upload.onprogress =
+        function(event) {
+
+            const loaded =
+                Number(
+                    event.loaded
+                ) || 0;
+
+            const safeTotal =
+                total;
+
+            let percent =
+                0;
+
+            if (
+                safeTotal > 0
+            ) {
+
+                percent =
+                    (
+                        loaded /
+                        safeTotal
+                    ) * 100;
+            }
+
+            percent =
+                Math.min(
+                    100,
+                    Math.max(
+                        0,
+                        percent
+                    )
+                );
+
+            const elapsedSeconds =
+                Math.max(
+                    0.001,
+                    (
+                        Date.now() -
+                        startedAt
+                    ) / 1000
+                );
+
+            const speed =
+                loaded /
+                elapsedSeconds;
+
+            const remaining =
+                Math.max(
+                    0,
+                    safeTotal -
+                    loaded
+                );
+
+            let eta =
+                0;
+
+            if (
+                speed > 0
+            ) {
+
+                eta =
+                    remaining /
+                    speed;
+            }
+
+            const amount =
+                document.getElementById(
+                    "uploadAmount"
+                );
+
+            const percentElement =
+                document.getElementById(
+                    "uploadPercent"
+                );
+
+            const speedElement =
+                document.getElementById(
+                    "uploadSpeed"
+                );
+
+            const etaElement =
+                document.getElementById(
+                    "uploadEta"
+                );
+
+            const bar =
+                document.getElementById(
+                    "progressBar"
+                );
+
+            if (amount) {
+
+                amount.innerText =
+                    formatSize(
+                        loaded
+                    ) +
+                    " / " +
+                    formatSize(
+                        safeTotal
+                    );
+            }
+
+            if (
+                percentElement
+            ) {
+
+                percentElement.innerText =
+                    percent.toFixed(
+                        1
+                    ) +
+                    "%";
+            }
+
+            if (
+                speedElement
+            ) {
+
+                speedElement.innerText =
+                    formatSpeed(
+                        speed
+                    );
+            }
+
+            if (
+                etaElement
+            ) {
+
+                etaElement.innerText =
+                    speed > 0
+                        ? formatTime(
+                            eta
+                        )
+                        : "--:--";
+            }
+
+            if (bar) {
+
+                bar.style.width =
+                    percent +
+                    "%";
+            }
+        };
+
+
+    xhr.onload =
+        function() {
+
+            if (
+                xhr.status >= 200 &&
+                xhr.status < 300
+            ) {
+
+                status.innerHTML =
+                    "✓ <b>" +
+                    escapeHtmlJs(
+                        file.name
+                    ) +
+                    "</b>" +
+                    "<br>" +
+                    formatSize(
+                        total
+                    ) +
+                    " uploaded successfully.";
+
+                loadReceivedFiles();
+
+                /*
+                 * Start next file.
+                 */
+                uploadNext(
+                    files,
+                    index + 1,
+                    button,
+                    status
+                );
+
+            } else {
+
+                status.innerText =
+                    "✕ Upload failed: " +
+                    file.name +
+                    " (" +
+                    xhr.status +
+                    ")";
+
+                button.disabled =
+                    false;
+            }
+        };
+
+
+    xhr.onerror =
+        function() {
+
+            status.innerText =
+                "✕ Network error while uploading " +
+                file.name;
+
+            button.disabled =
+                false;
+        };
+
+
+    xhr.onabort =
+        function() {
+
+            status.innerText =
+                "Upload cancelled: " +
+                file.name;
+
+            button.disabled =
+                false;
+        };
+
+
+    xhr.send(
+        file
+    );
+}
+
+
+function escapeHtmlJs(
+    value
+) {
+
+    return String(value)
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+        .replace(
+            /</g,
+            "&lt;"
+        )
+        .replace(
+            />/g,
+            "&gt;"
+        )
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+        .replace(
+            /'/g,
+            "&#039;"
+        );
+}
+
+
+async function loadReceivedFiles() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/received"
+            );
+
+        if (
+            !response.ok
+        ) {
+
+            throw new Error(
+                "HTTP " +
+                response.status
+            );
+        }
+
+        const files =
+            await response.json();
+
+        const container =
+            document.getElementById(
+                "receivedFiles"
+            );
+
+        if (!container) {
+            return;
+        }
+
+        if (
+            !files ||
+            files.length === 0
+        ) {
+
+            container.innerHTML =
+                "<div class='empty'>" +
+                "No files received yet." +
+                "</div>";
+
+            return;
+        }
+
+        container.innerHTML =
+            files
+                .map(
+                    function(file) {
+
+                        return (
+                            "<div class='received-file'>" +
+
+                            "<div class='file-name'>" +
+                            escapeHtmlJs(
+                                file.name
+                            ) +
+                            "</div>" +
+
+                            "<div class='file-size'>" +
+                            formatSize(
+                                file.size
+                            ) +
+                            "</div>" +
+
+                            "<span class='received-category'>" +
+                            escapeHtmlJs(
+                                file.category
+                            ) +
+                            "</span>" +
+
+                            "</div>"
+                        );
+                    }
+                )
+                .join("");
+
+    } catch (error) {
+
+        console.log(
+            "Received files error:",
+            error
+        );
+    }
+}
+
+
+loadReceivedFiles();
+
+
+setInterval(
+    loadReceivedFiles,
+    2000
+);
+
+</script>
+
+</body>
+
+</html>
