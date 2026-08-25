@@ -7,6 +7,8 @@ import React, {
 
 import {
   Alert,
+  PermissionsAndroid,
+  Platform,
   AppState,
   Share,
 } from 'react-native';
@@ -342,6 +344,15 @@ const handleReceivedFilePress = async (
     try {
 
       setLoading(true);
+
+      if (
+        Platform.OS === 'android' &&
+        Number(Platform.Version) >= 33
+      ) {
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+        );
+      }
 
       // -----------------------------------------------------
       // NETWORK

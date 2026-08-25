@@ -100,7 +100,12 @@ class DropLinkModule(
             val url =
                 "http://$ip:$port"
 
-            promise.resolve(
+                        LocalShareNotification.show(
+                reactContext,
+                url
+            )
+
+promise.resolve(
                 createServerInfo(
                     ip = ip,
                     port = port,
@@ -457,6 +462,10 @@ class DropLinkModule(
 
             server?.stop()
 
+            LocalShareNotification.clear(
+                reactContext
+            )
+
             server = null
 
             promise.resolve(
@@ -784,6 +793,10 @@ class DropLinkModule(
     override fun invalidate() {
 
         server?.stop()
+
+        LocalShareNotification.clear(
+            reactContext
+        )
 
         server = null
 

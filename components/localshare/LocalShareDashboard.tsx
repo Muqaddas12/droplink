@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -48,7 +49,7 @@ const fileIcon = (mimeType?: string | null, category?: string) => {
   return 'DOC';
 };
 
-function LocalShareHeader({ isServerStarted }: Pick<LocalShareDashboardProps, 'isServerStarted'>) {
+function LocalShareHeader({ isServerStarted, onOpenMenu }: Pick<LocalShareDashboardProps, 'isServerStarted'> & { onOpenMenu: () => void }) {
   return (
     <View style={styles.header}>
       <View>
@@ -61,9 +62,9 @@ function LocalShareHeader({ isServerStarted }: Pick<LocalShareDashboardProps, 'i
         <Text style={styles.title}>Local Share</Text>
         <Text style={styles.subtitle}>Fast, private sharing on your Wi-Fi.</Text>
       </View>
-      <View style={styles.headerMark}>
-        <Text style={styles.headerMarkText}>↗</Text>
-      </View>
+      <Pressable style={styles.headerMark} onPress={onOpenMenu}>
+        <Text style={styles.headerMarkText}>☰</Text>
+      </Pressable>
     </View>
   );
 }
@@ -190,15 +191,31 @@ function EmptyState() {
 }
 
 export function LocalShareDashboard(props: LocalShareDashboardProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const isEmpty = !props.isServerStarted && props.sharedFiles.length === 0 && props.receivedFiles.length === 0;
-  return <ScrollView style={styles.screen} contentContainerStyle={styles.container} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={props.refreshing} onRefresh={props.onRefresh} tintColor="#2563eb" />}>
-    <LocalShareHeader isServerStarted={props.isServerStarted} />
-    <ServerCard {...props} />
-    <SelectFilesCard {...props} />
-    <FilesSection {...props} />
-    {isEmpty && <EmptyState />}
-    <View style={styles.note}><View style={styles.noteIcon}><Text style={styles.noteIconText}>i</Text></View><Text style={styles.noteText}>Keep this page open while others are connected. They can download shared files and send files back to this device.</Text></View>
-  </ScrollView>;
+  const closeMenu = () => setMenuOpen(false);
+  return <>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={props.refreshing} onRefresh={props.onRefresh} tintColor="#2563eb" />}>
+      <LocalShareHeader isServerStarted={props.isServerStarted} onOpenMenu={() => setMenuOpen(true)} />
+      <ServerCard {...props} />
+      <SelectFilesCard {...props} />
+      <FilesSection {...props} />
+      {isEmpty && <EmptyState />}
+      <View style={styles.note}><View style={styles.noteIcon}><Text style={styles.noteIconText}>i</Text></View><Text style={styles.noteText}>Keep this page open while others are connected. They can download shared files and send files back to this device.</Text></View>
+    </ScrollView>
+    <Modal visible={menuOpen} transparent animationType="slide" onRequestClose={closeMenu}>
+      <Pressable style={styles.menuBackdrop} onPress={closeMenu}>
+        <Pressable style={styles.menuSheet} onPress={() => undefined}>
+          <View style={styles.menuHandle} />
+          <Text style={styles.menuTitle}>Local Share controls</Text>
+          <Text style={styles.menuStatus}>{props.isServerStarted ? 'Server is active. A notification is shown while it runs.' : 'Server is stopped.'}</Text>
+          <Pressable style={styles.menuAction} onPress={() => { closeMenu(); props.onSelectFiles(); }}><Text style={styles.menuActionText}>+ Add files</Text></Pressable>
+          {props.isServerStarted && <Pressable style={styles.menuAction} onPress={() => { closeMenu(); props.onShareUrl(); }}><Text style={styles.menuActionText}>↗ Share connection link</Text></Pressable>}
+          {props.isServerStarted && <Pressable style={[styles.menuAction, styles.menuStopAction]} onPress={() => { closeMenu(); props.onStopServer(); }}><Text style={styles.menuStopText}>■ Stop Local Share</Text></Pressable>}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  </>;
 }
 
 const styles = StyleSheet.create({
@@ -208,5 +225,6 @@ const styles = StyleSheet.create({
   selectCard: { minHeight: 86, padding: 15, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: '#2563eb', shadowColor: '#2563eb', shadowOpacity: 0.18, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 3 }, dimmed: { opacity: 0.65 }, selectIcon: { width: 48, height: 48, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.15)' }, selectIconText: { color: '#fff', fontSize: 29, fontWeight: '300' }, selectCopy: { flex: 1, marginLeft: 13 }, selectTitle: { color: '#fff', fontSize: 16, fontWeight: '800' }, selectSubtitle: { marginTop: 3, color: '#dbeafe', fontSize: 11, lineHeight: 16 }, selectArrow: { color: '#fff', fontSize: 29, fontWeight: '300' },
   sectionCard: { marginTop: 18, padding: 18, borderWidth: 1, borderColor: '#e5eaf2', borderRadius: 20, backgroundColor: '#fff' }, sectionTitle: { color: '#0f172a', fontSize: 17, fontWeight: '800' }, sectionCaption: { marginTop: 4, color: '#64748b', fontSize: 12 }, fileList: { marginTop: 11 }, pressableFileRow: { borderRadius: 12 }, fileRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingVertical: 9 }, fileIcon: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: '#eff6ff' }, fileIconText: { color: '#2563eb', fontSize: 12, fontWeight: '800' }, fileCopy: { flex: 1, marginLeft: 11 }, fileName: { color: '#1e293b', fontSize: 13, fontWeight: '700' }, fileDetail: { marginTop: 4, color: '#64748b', fontSize: 11 }, fileAction: { color: '#2563eb', fontSize: 11, fontWeight: '800' },
   emptyCard: { marginTop: 18, padding: 28, alignItems: 'center', borderRadius: 20, borderWidth: 1, borderStyle: 'dashed', borderColor: '#cbd5e1', backgroundColor: '#fff' }, emptyIcon: { width: 52, height: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 18, backgroundColor: '#eff6ff' }, emptyIconText: { color: '#2563eb', fontSize: 26, fontWeight: '700' }, emptyTitle: { marginTop: 13, color: '#1e293b', fontSize: 16, fontWeight: '800' }, emptyText: { maxWidth: 250, marginTop: 7, color: '#64748b', fontSize: 12, lineHeight: 18, textAlign: 'center' },
+  menuBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15,23,42,0.45)' }, menuSheet: { padding: 20, paddingBottom: 34, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: '#fff' }, menuHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#cbd5e1' }, menuTitle: { marginTop: 17, color: '#0f172a', fontSize: 19, fontWeight: '800' }, menuStatus: { marginTop: 5, color: '#64748b', fontSize: 12, lineHeight: 18 }, menuAction: { marginTop: 14, paddingVertical: 15, paddingHorizontal: 16, borderRadius: 13, backgroundColor: '#eff6ff' }, menuActionText: { color: '#1d4ed8', fontSize: 14, fontWeight: '800' }, menuStopAction: { backgroundColor: '#fff1f2' }, menuStopText: { color: '#be123c', fontSize: 14, fontWeight: '800' },
   note: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 23, paddingHorizontal: 5 }, noteIcon: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: '#dbeafe' }, noteIconText: { color: '#2563eb', fontSize: 12, fontWeight: '800' }, noteText: { flex: 1, marginLeft: 9, color: '#64748b', fontSize: 11, lineHeight: 17 },
 });

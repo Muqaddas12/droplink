@@ -743,6 +743,9 @@ body {
     font-size: 13px;
 }
 
+.download-all { width: 100%; margin: 0 0 12px; padding: 12px 16px; border: 0; border-radius: 10px; background: #0f172a; color: white; font-size: 14px; font-weight: 800; cursor: pointer; }
+.download-all:disabled { opacity: .6; cursor: wait; }
+.download-status { display: none; margin: 0 0 14px; }
 .download {
     display: inline-block;
     margin-top: 10px;
@@ -879,6 +882,8 @@ Select files to upload.
 Files available from this device
 </div>
 
+<button id="downloadAllButton" class="download-all" onclick="downloadAll()">Download all files</button>
+<div id="downloadStatus" class="status download-status"></div>
 """
                 )
 
@@ -928,13 +933,14 @@ ${escapeHtml(file.name)}
 ${formatSize(file.size)}
 </div>
 
-<div class="file-downloads">
+<div class="file-downloads" id="download-count-$index">
 $downloadText
 </div>
 
 <a
     class="download"
     href="/download/$index/$encodedName"
+    onclick="downloadFile($index, '$encodedName', ${file.size}, event)"
 >
 Download
 </a>
@@ -1058,6 +1064,20 @@ function formatTime(
 }
 
 
+function setDownloadStatus(value) { const status = document.getElementById("downloadStatus"); if (status) { status.style.display = "block"; status.innerHTML = value; } }
+function updateDownloadCounts() { return fetch("/shared").then(function(response) { return response.json(); }).then(function(files) { files.forEach(function(file) { const count = document.getElementById("download-count-" + file.index); if (count) { count.innerText = file.downloadCount === 1 ? "Downloaded 1 time" : "Downloaded " + file.downloadCount + " times"; } }); }); }
+async function downloadFile(index, encodedName, expectedSize, event, label) {
+    if (event) event.preventDefault();
+    const name = decodeURIComponent(String(encodedName).replace(/\+/g, " "));
+    const startedAt = Date.now(); let loaded = 0; let total = Number(expectedSize) || 0;
+    const response = await fetch("/download/" + index + "/" + encodedName);
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    total = Number(response.headers.get("Content-Length")) || total;
+    const chunks = []; const reader = response.body && response.body.getReader ? response.body.getReader() : null;
+    if (reader) { while (true) { const result = await reader.read(); if (result.done) break; chunks.push(result.value); loaded += result.value.length; const elapsed = Math.max(.001, (Date.now() - startedAt) / 1000); const speed = loaded / elapsed; const remaining = Math.max(0, total - loaded); const eta = speed > 0 ? remaining / speed : 0; const percent = total > 0 ? (loaded / total) * 100 : 0; setDownloadStatus("<b>" + escapeHtmlJs(name) + "</b><br>" + (label || "Downloading") + "<br><br>" + formatSize(loaded) + " / " + formatSize(total) + " · " + percent.toFixed(1) + "%<br>" + formatSpeed(speed) + " · " + formatSize(remaining) + " remaining · ETA " + (speed > 0 ? formatTime(eta) : "--:--") + "<div class='progress'><div class='progress-bar' style='width:" + percent + "%'></div></div>"); } } else { const blob = await response.blob(); chunks.push(blob); loaded = blob.size; }
+    const blob = new Blob(chunks); const link = document.createElement("a"); const url = URL.createObjectURL(blob); link.href = url; link.download = name; document.body.appendChild(link); link.click(); link.remove(); setTimeout(function() { URL.revokeObjectURL(url); }, 1000); setDownloadStatus("✓ <b>" + escapeHtmlJs(name) + "</b> downloaded<br>" + formatSize(loaded) + " complete"); await new Promise(function(resolve) { setTimeout(resolve, 250); }); await updateDownloadCounts();
+}
+async function downloadAll() { const button = document.getElementById("downloadAllButton"); if (button) button.disabled = true; try { const files = await fetch("/shared").then(function(response) { return response.json(); }); for (let index = 0; index < files.length; index++) { const file = files[index]; await downloadFile(file.index, encodeURIComponent(file.name), file.size, null, "File " + (index + 1) + " of " + files.length); } setDownloadStatus("✓ All " + files.length + " files downloaded successfully."); } catch (error) { setDownloadStatus("✕ Download failed: " + escapeHtmlJs(error.message || String(error))); } finally { if (button) button.disabled = false; } }
 function uploadFiles() {
 
     const input =
