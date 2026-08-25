@@ -239,7 +239,8 @@ export default function TabOneScreen() {
   };
 
   const handleReceivedFilePress = (file: ReceivedFile) => {
-    void openReceivedFile(file);
+    console.log(file)
+    Linking.openURL(`content:/${file.path}`)
   };
 
   // =========================================================
