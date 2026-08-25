@@ -8,7 +8,6 @@ import React, {
 import {
   Alert,
   AppState,
-  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
