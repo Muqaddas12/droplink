@@ -1,8 +1,9 @@
-# OSX
+# macOS
 .DS_Store
 
-# Android/IntelliJ
+# Android / IntelliJ
 build/
+**/build/
 .idea/
 .gradle/
 local.properties
@@ -17,3 +18,7 @@ local.properties
 key.properties
 *.jks
 *.keystore
+
+# Android Gradle files
+/build.gradle
+/app/build.gradle
