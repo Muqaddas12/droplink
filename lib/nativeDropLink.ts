@@ -83,6 +83,8 @@ export type NetworkInfo = {
   type: string;
 };
 
+
+
 // =========================================================
 // NATIVE MODULE
 // =========================================================
@@ -184,17 +186,7 @@ export async function startLocalServer(
 
   checkAndroid();
 
-  if (
-    !files ||
-    files.length === 0
-  ) {
-
-    throw new Error(
-      'Please select at least one file.',
-    );
-  }
-
-  return DropLink!.startServer(
+return DropLink!.startServer(
     files,
   );
 }

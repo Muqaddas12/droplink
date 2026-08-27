@@ -1,6 +1,7 @@
 package com.muqaddas123.droplink.internetshare
 
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import android.content.ContentResolver
 import android.net.Uri
 import java.io.BufferedReader
@@ -40,6 +41,8 @@ class InternetTransferServer(
 
     companion object {
         private const val TAG = "DropLinkInternet"
+        private const val SOCKET_BUFFER_SIZE = 1024 * 1024
+        private const val SERVER_BACKLOG = 128
     }
 
     private var serverSocket: ServerSocket? = null
@@ -108,11 +111,11 @@ class InternetTransferServer(
              *
              * Use wildcard binding instead.
              */
-            serverSocket =
-                ServerSocket(
-                    0,
-                    50
-                )
+            serverSocket = ServerSocket().apply {
+                reuseAddress = true
+                receiveBufferSize = SOCKET_BUFFER_SIZE
+                bind(InetSocketAddress(0), SERVER_BACKLOG)
+            }
 
             port =
                 serverSocket!!.localPort
@@ -176,6 +179,13 @@ class InternetTransferServer(
                             serverSocket
                                 ?.accept()
                                 ?: break
+
+                        // Keep the transfer window full and avoid delaying
+                        // small HTTP control packets behind file data.
+                        socket.tcpNoDelay = true
+                        socket.keepAlive = true
+                        socket.sendBufferSize = SOCKET_BUFFER_SIZE
+                        socket.receiveBufferSize = SOCKET_BUFFER_SIZE
 
                         android.util.Log.d(
                             TAG,

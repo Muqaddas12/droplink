@@ -32,32 +32,12 @@ class DropLinkModule(
 
         try {
 
-            if (files.size() == 0) {
-
-                promise.reject(
-                    "NO_FILES",
-                    "No files selected."
-                )
-
-                return
-            }
-
-            val sharedFiles =
+val sharedFiles =
                 readableArrayToSharedFiles(
                     files
                 )
 
-            if (sharedFiles.isEmpty()) {
-
-                promise.reject(
-                    "NO_VALID_FILES",
-                    "No valid files were provided."
-                )
-
-                return
-            }
-
-            /*
+/*
              * Stop only our existing Local Share server.
              *
              * Internet Share is completely separate
@@ -67,7 +47,8 @@ class DropLinkModule(
 
             val newServer =
                 LocalHttpServer(
-                    reactContext.contentResolver
+                    reactContext.contentResolver,
+                    android.os.Build.MODEL
                 )
 
             newServer.setFiles(
@@ -100,12 +81,12 @@ class DropLinkModule(
             val url =
                 "http://$ip:$port"
 
-                        LocalShareNotification.show(
+            LocalShareNotification.show(
                 reactContext,
                 url
             )
 
-promise.resolve(
+            promise.resolve(
                 createServerInfo(
                     ip = ip,
                     port = port,
@@ -321,7 +302,8 @@ promise.resolve(
                      * directory. It is NOT started.
                      */
                     LocalHttpServer(
-                        reactContext.contentResolver
+                        reactContext.contentResolver,
+                        "DropLink device"
                     ).scanReceivedFiles()
                 }
 
@@ -585,7 +567,6 @@ promise.resolve(
         }
     }
 
-    // =========================================================
     // CONVERT READABLE ARRAY → SHARED FILES
     // =========================================================
 

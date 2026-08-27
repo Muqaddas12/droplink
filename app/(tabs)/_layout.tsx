@@ -1,5 +1,4 @@
 import React from 'react';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Tabs } from 'expo-router';
 import {
   StyleSheet,
@@ -7,36 +6,10 @@ import {
   View,
 } from 'react-native';
 
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
-
-function TabBarIcon({
-  name,
-  color,
-}: {
-  name: React.ComponentProps<
-    typeof FontAwesome
-  >['name'];
-  color: string;
-}) {
-  return (
-    <FontAwesome
-      name={name}
-      size={25}
-      color={color}
-      style={styles.tabIcon}
-    />
-  );
+function TabBarIcon({ symbol, color }: { symbol: string; color: string }) {
+  return <Text style={[styles.tabIcon, { color }]}>{symbol}</Text>;
 }
-
 export default function TabLayout() {
-
-  const colorScheme =
-    useColorScheme();
-
-  const colors =
-    Colors[colorScheme ?? 'light'];
 
   return (
     <Tabs
@@ -120,7 +93,7 @@ export default function TabLayout() {
             color,
           }) => (
             <TabBarIcon
-              name="wifi"
+              symbol="⌁"
               color={color}
             />
           ),
@@ -139,7 +112,7 @@ export default function TabLayout() {
             color,
           }) => (
             <TabBarIcon
-              name="globe"
+              symbol="◎"
               color={color}
             />
           ),
@@ -246,7 +219,7 @@ const styles = StyleSheet.create({
     marginTop: -1,
   },
 
-  tabIcon: {
+  tabIcon: { fontSize: 24, fontWeight: '700',
     marginBottom: -2,
   },
 

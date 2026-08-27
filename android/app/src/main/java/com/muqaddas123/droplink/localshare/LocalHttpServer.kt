@@ -47,13 +47,14 @@ data class ReceivedFile(
 // =========================================================
 
 class LocalHttpServer(
-    private val contentResolver: ContentResolver
+    private val contentResolver: ContentResolver,
+    private val senderName: String
 ) {
 
     private var serverSocket: ServerSocket? = null
 
-    private val executor =
-        Executors.newCachedThreadPool()
+    // LAN sharing does not need an unbounded worker pool.
+    private val executor = Executors.newFixedThreadPool(4)
 
     @Volatile
     private var running = false
@@ -352,6 +353,7 @@ fun scanReceivedFiles(): List<ReceivedFile> {
         }
 
         serverSocket = null
+        executor.shutdownNow()
 
         /*
          * IMPORTANT:
@@ -839,10 +841,10 @@ input[type=file] {
 
 <div class="header">
 
-<h1>DropLink</h1>
+<h1>${escapeHtml(senderName)} wants to share files</h1>
 
 <p>
-Send and receive files directly.
+Open a file below to download it directly from this phone.
 </p>
 
 </div>

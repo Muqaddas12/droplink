@@ -59,6 +59,7 @@ export default function TabOneScreen() {
   const [isServerStarted, setIsServerStarted] =
     useState(false);
 
+
   // =========================================================
   // RECEIVED FILES SNAPSHOT
   // =========================================================
@@ -302,7 +303,7 @@ const handleReceivedFilePress = async (
 
         void loadServerData();
 
-      }, 2000);
+      }, 2_000);
 
     return () => {
       clearInterval(interval);
@@ -331,6 +332,49 @@ const handleReceivedFilePress = async (
     }
   };
 
+  const handleStartEmptyServer = async () => {
+    if (loading || isServerStarted) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const network = await getNetworkInfo();
+
+      if (!network.connected) {
+        Alert.alert(
+          'No Network',
+          'Please connect to a Wi-Fi network before sharing.',
+        );
+        return;
+      }
+
+      const existingReceivedFiles =
+        await scanLocalReceivedFiles();
+
+      receivedFilesAtServerStart.current =
+        new Set(existingReceivedFiles.map(file => file.path));
+
+      const info = await startLocalServer([]);
+
+      setServerInfo(info);
+      setIsServerStarted(true);
+      await loadServerData(true);
+
+      Alert.alert(
+        'DropLink Ready',
+        `This device is ready to receive files.\n\n${info.url}`,
+      );
+    } catch (error) {
+      Alert.alert(
+        'Server Error',
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
   // =========================================================
   // SELECT / ADD FILES
   // =========================================================
@@ -645,6 +689,7 @@ const handleReceivedFilePress = async (
       totalSharedSize={totalSharedSize}
       onOpenReceivedFile={handleReceivedFilePress}
       onRefresh={handleRefresh}
+      onStartEmptyServer={handleStartEmptyServer}
       onSelectFiles={handleSelectFiles}
       onShareUrl={handleShareUrl}
       onStopServer={handleStop}

@@ -252,6 +252,67 @@ object NetworkUtils {
         val candidates =
             getIpCandidates()
 
+        /*
+         * Prefer Wi-Fi / hotspot when available. IPv6 is first because it can
+         * be globally routable without IPv4 port forwarding; IPv4 still allows
+         * fast transfers to receivers on the same Wi-Fi or hotspot.
+         */
+        val wifiIpv6 =
+            candidates.firstOrNull {
+                isLocalInterface(it) &&
+                    it.address is Inet6Address &&
+                    isUsableIpv6(it.address as Inet6Address)
+            }
+
+        if (wifiIpv6 != null) {
+            android.util.Log.d(
+                "DropLinkNetwork",
+                "INTERNET SHARE Wi-Fi IPv6: ${wifiIpv6.address.hostAddress} " +
+                    "INTERFACE: ${wifiIpv6.interfaceName}"
+            )
+            return wifiIpv6
+        }
+
+        val wifiIpv4 =
+            candidates.firstOrNull {
+                isLocalInterface(it) &&
+                    it.address is Inet4Address &&
+                    !it.address.isLoopbackAddress &&
+                    !it.address.isLinkLocalAddress
+            }
+
+        if (wifiIpv4 != null) {
+            android.util.Log.d(
+                "DropLinkNetwork",
+                "INTERNET SHARE Wi-Fi IPv4: ${wifiIpv4.address.hostAddress} " +
+                    "INTERFACE: ${wifiIpv4.interfaceName}"
+            )
+            return wifiIpv4
+        }
+
+        val ethernetIpv6 =
+            candidates.firstOrNull {
+                isEthernetInterface(it) &&
+                    it.address is Inet6Address &&
+                    isUsableIpv6(it.address as Inet6Address)
+            }
+
+        if (ethernetIpv6 != null) {
+            return ethernetIpv6
+        }
+
+        val ethernetIpv4 =
+            candidates.firstOrNull {
+                isEthernetInterface(it) &&
+                    it.address is Inet4Address &&
+                    !it.address.isLoopbackAddress &&
+                    !it.address.isLinkLocalAddress
+            }
+
+        if (ethernetIpv4 != null) {
+            return ethernetIpv4
+        }
+
 
         /*
          * 1. Preferred cellular interface:
