@@ -1,4 +1,4 @@
-import {
+﻿import {
   NativeModules,
   Platform,
 } from 'react-native';
@@ -20,11 +20,6 @@ export type SharedFile = {
   name: string;
   mimeType?: string | null;
   size: number;
-
-  /**
-   * Number of times other users successfully
-   * downloaded this file.
-   */
   downloadCount: number;
 };
 
@@ -33,14 +28,8 @@ export type ReceivedFile = {
   mimeType: string;
   size: number;
   path: string;
-
   /**
-   * Images
-   * Videos
-   * Audio
-   * Documents
-   * Archives
-   * Others
+   * Images | Videos | Audio | Documents | Archives | Others
    */
   category: string;
 };
@@ -53,6 +42,8 @@ export type ServerInfo = {
   ip: string;
   port: number;
   url: string;
+  /** Friendly mDNS hostname — resolves natively in iOS/macOS Safari on the same LAN */
+  mdnsName?: string;
 };
 
 // =========================================================
@@ -61,15 +52,10 @@ export type ServerInfo = {
 
 export type ServerStatus = {
   running: boolean;
-
   ip?: string | null;
-
   port: number;
-
   url?: string | null;
-
   sharedFileCount: number;
-
   receivedFileCount: number;
 };
 
@@ -83,64 +69,19 @@ export type NetworkInfo = {
   type: string;
 };
 
-
-
 // =========================================================
 // NATIVE MODULE
 // =========================================================
 
 type DropLinkNativeModule = {
-
-  // -------------------------------------------------------
-  // SERVER
-  // -------------------------------------------------------
-
-  startServer(
-    files: ShareFile[],
-  ): Promise<ServerInfo>;
-
+  startServer(files: ShareFile[]): Promise<ServerInfo>;
   stopServer(): Promise<boolean>;
-
-  // -------------------------------------------------------
-  // ADD FILES WITHOUT STOPPING SERVER
-  // -------------------------------------------------------
-
-  addFiles(
-    files: ShareFile[],
-  ): Promise<SharedFile[]>;
-
-  // -------------------------------------------------------
-  // FILE LISTS
-  // -------------------------------------------------------
-
+  addFiles(files: ShareFile[]): Promise<SharedFile[]>;
   getSharedFiles(): Promise<SharedFile[]>;
-
   getReceivedFiles(): Promise<ReceivedFile[]>;
-
-  // -------------------------------------------------------
-  // SCAN / REFRESH RECEIVED FILES
-  // -------------------------------------------------------
-
-  /**
-   * Scans Download/DropLink recursively
-   * and returns all received files.
-   *
-   * Files are returned newest first.
-   */
   scanReceivedFiles(): Promise<ReceivedFile[]>;
-
-  // -------------------------------------------------------
-  // SERVER STATUS
-  // -------------------------------------------------------
-
   getServerStatus(): Promise<ServerStatus>;
-
-  // -------------------------------------------------------
-  // NETWORK
-  // -------------------------------------------------------
-
   getLocalIp(): Promise<string>;
-
   getNetworkInfo(): Promise<NetworkInfo>;
 };
 
@@ -158,21 +99,11 @@ const DropLink =
 // =========================================================
 
 function checkAndroid() {
-
-  if (
-    Platform.OS !== 'android'
-  ) {
-
-    throw new Error(
-      'DropLink currently supports Android only.',
-    );
+  if (Platform.OS !== 'android') {
+    throw new Error('DropLink currently supports Android only.');
   }
-
   if (!DropLink) {
-
-    throw new Error(
-      'DropLink native module is not available. Rebuild the Android app.',
-    );
+    throw new Error('DropLink native module is not available. Rebuild the Android app.');
   }
 }
 
@@ -183,62 +114,28 @@ function checkAndroid() {
 export async function startLocalServer(
   files: ShareFile[],
 ): Promise<ServerInfo> {
-
   checkAndroid();
-
-return DropLink!.startServer(
-    files,
-  );
+  return DropLink!.startServer(files);
 }
 
 // =========================================================
 // ADD FILES
 // =========================================================
 
-/**
- * Adds files to the already-running Local Share
- * server.
- *
- * IMPORTANT:
- *
- * This does NOT restart the server.
- *
- * The existing server keeps the same:
- *
- * IP
- * PORT
- * URL
- * connections
- */
 export async function addLocalShareFiles(
   files: ShareFile[],
 ): Promise<SharedFile[]> {
-
   checkAndroid();
-
-  if (
-    !files ||
-    files.length === 0
-  ) {
-
-    return [];
-  }
-
-  return DropLink!.addFiles(
-    files,
-  );
+  if (!files || files.length === 0) return [];
+  return DropLink!.addFiles(files);
 }
 
 // =========================================================
 // GET SHARED FILES
 // =========================================================
 
-export async function getLocalSharedFiles(): Promise<
-  SharedFile[]
-> {
-
+export async function getLocalSharedFiles(): Promise<SharedFile[]> {
   checkAndroid();
-
   return DropLink!.getSharedFiles();
 }
 
@@ -246,18 +143,8 @@ export async function getLocalSharedFiles(): Promise<
 // GET RECEIVED FILES
 // =========================================================
 
-/**
- * Gets the currently loaded received-file list.
- *
- * The native server loads files from
- * Download/DropLink when the server starts.
- */
-export async function getLocalReceivedFiles(): Promise<
-  ReceivedFile[]
-> {
-
+export async function getLocalReceivedFiles(): Promise<ReceivedFile[]> {
   checkAndroid();
-
   return DropLink!.getReceivedFiles();
 }
 
@@ -265,20 +152,8 @@ export async function getLocalReceivedFiles(): Promise<
 // SCAN / REFRESH RECEIVED FILES
 // =========================================================
 
-/**
- * Scans Download/DropLink recursively.
- *
- * This finds previously received files even if
- * they were received during an earlier server session.
- *
- * Files are returned newest first.
- */
-export async function scanLocalReceivedFiles(): Promise<
-  ReceivedFile[]
-> {
-
+export async function scanLocalReceivedFiles(): Promise<ReceivedFile[]> {
   checkAndroid();
-
   return DropLink!.scanReceivedFiles();
 }
 
@@ -286,12 +161,8 @@ export async function scanLocalReceivedFiles(): Promise<
 // GET SERVER STATUS
 // =========================================================
 
-export async function getLocalServerStatus(): Promise<
-  ServerStatus
-> {
-
+export async function getLocalServerStatus(): Promise<ServerStatus> {
   checkAndroid();
-
   return DropLink!.getServerStatus();
 }
 
@@ -300,9 +171,7 @@ export async function getLocalServerStatus(): Promise<
 // =========================================================
 
 export async function stopLocalServer(): Promise<boolean> {
-
   checkAndroid();
-
   return DropLink!.stopServer();
 }
 
@@ -311,9 +180,7 @@ export async function stopLocalServer(): Promise<boolean> {
 // =========================================================
 
 export async function getLocalIp(): Promise<string> {
-
   checkAndroid();
-
   return DropLink!.getLocalIp();
 }
 
@@ -321,11 +188,7 @@ export async function getLocalIp(): Promise<string> {
 // GET NETWORK INFO
 // =========================================================
 
-export async function getNetworkInfo(): Promise<
-  NetworkInfo
-> {
-
+export async function getNetworkInfo(): Promise<NetworkInfo> {
   checkAndroid();
-
   return DropLink!.getNetworkInfo();
 }

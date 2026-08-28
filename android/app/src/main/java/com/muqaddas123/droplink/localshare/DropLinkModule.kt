@@ -1,7 +1,10 @@
 package com.muqaddas123.droplink.localshare
 
 
+import android.content.Context
 import android.net.Uri
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -15,6 +18,46 @@ class DropLinkModule(
 ) : ReactContextBaseJavaModule(reactContext) {
 
     private var server: LocalHttpServer? = null
+
+    // =========================================================
+    // NSD / mDNS
+    // =========================================================
+
+    private var nsdManager: NsdManager? = null
+    private var nsdListener: NsdManager.RegistrationListener? = null
+
+    private fun registerNsd(port: Int) {
+        try {
+            val mgr = reactContext.getSystemService(Context.NSD_SERVICE) as? NsdManager
+                ?: return
+
+            val listener = object : NsdManager.RegistrationListener {
+                override fun onRegistrationFailed(si: NsdServiceInfo, code: Int) {}
+                override fun onUnregistrationFailed(si: NsdServiceInfo, code: Int) {}
+                override fun onServiceRegistered(si: NsdServiceInfo) {}
+                override fun onServiceUnregistered(si: NsdServiceInfo) {}
+            }
+
+            val serviceInfo = NsdServiceInfo().apply {
+                serviceName = "DropLink"
+                serviceType = "_http._tcp."
+                this.port   = port
+            }
+
+            mgr.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
+            nsdManager = mgr
+            nsdListener = listener
+        } catch (_: Exception) {}
+    }
+
+    private fun unregisterNsd() {
+        try {
+            val listener = nsdListener ?: return
+            nsdManager?.unregisterService(listener)
+        } catch (_: Exception) {}
+        nsdManager  = null
+        nsdListener = null
+    }
 
     override fun getName(): String {
         return "DropLink"
@@ -81,6 +124,10 @@ val sharedFiles =
             val url =
                 "http://$ip:$port"
 
+            // Register mDNS/NSD so iOS/Mac devices can discover "droplink.local"
+            unregisterNsd()
+            registerNsd(port)
+
             LocalShareNotification.show(
                 reactContext,
                 url
@@ -93,6 +140,7 @@ val sharedFiles =
                     url = url
                 )
             )
+
 
         } catch (e: Exception) {
 
@@ -444,6 +492,8 @@ val sharedFiles =
 
             server?.stop()
 
+            unregisterNsd()
+
             LocalShareNotification.clear(
                 reactContext
             )
@@ -663,6 +713,12 @@ val sharedFiles =
             "url",
             url
         )
+
+        // Friendly mDNS name (resolves natively on iOS/macOS Safari)
+        putString(
+            "mdnsName",
+            "droplink.local"
+        )
     }
 
     // =========================================================
@@ -774,6 +830,8 @@ val sharedFiles =
     override fun invalidate() {
 
         server?.stop()
+
+        unregisterNsd()
 
         LocalShareNotification.clear(
             reactContext

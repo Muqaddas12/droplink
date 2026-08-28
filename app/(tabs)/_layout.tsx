@@ -1,57 +1,86 @@
-import { Feather, Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Tabs } from 'expo-router';
+import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import { useTheme } from '@/context/ThemeContext';
+import { useSidebar } from '@/context/SidebarContext';
 
-// ─── Theme Colors ─────────────────────────────────────────────────────────────
-const THEME = {
-  bg: '#080D1A',
-  surface: '#0F172A',
-  primary: '#3B82F6',
-  primaryDark: '#2563EB',
-  border: 'rgba(255, 255, 255, 0.08)',
-  textPrimary: '#F8FAFC',
-  textMuted: '#64748B',
-  tabActiveBg: 'rgba(59, 130, 246, 0.14)',
-};
-
-function BrandHeader() {
+function TabIcon({
+  symbol,
+  focused,
+  activeColor,
+  activeFade,
+  inactiveColor,
+}: {
+  symbol: string;
+  focused: boolean;
+  activeColor: string;
+  activeFade: string;
+  inactiveColor: string;
+}) {
   return (
-    <View style={styles.headerTitle}>
-      <View style={styles.logoBadge}>
-        <Feather name="share-2" size={19} color="#FFFFFF" />
-      </View>
-      <View style={styles.brandCopy}>
-        <View style={styles.brandTitleRow}>
-          <Text style={styles.brandName}>DropLink</Text>
-          <View style={styles.proBadge}>
-            <Text style={styles.proBadgeText}>PRO</Text>
-          </View>
-        </View>
-        <Text style={styles.brandTagline}>Fast & Private File Transfer</Text>
-      </View>
+    <View
+      style={[
+        styles.iconWrap,
+        focused && { backgroundColor: activeFade },
+      ]}
+    >
+      <Text style={[styles.iconText, { color: focused ? activeColor : inactiveColor }]}>
+        {symbol}
+      </Text>
     </View>
   );
 }
 
 export default function TabLayout() {
+  const { colors } = useTheme();
+  const { openSidebar, receivedCount } = useSidebar();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: true,
-        headerTitle: () => <BrandHeader />,
         headerStyle: {
-          backgroundColor: THEME.bg,
+          backgroundColor: colors.bg,
         },
         headerShadowVisible: false,
         headerTitleAlign: 'left',
-
-        tabBarActiveTintColor: THEME.primary,
-        tabBarInactiveTintColor: THEME.textMuted,
-        tabBarStyle: styles.tabBar,
+        headerLeft: () => (
+          <TouchableOpacity
+            onPress={openSidebar}
+            activeOpacity={0.7}
+            style={[styles.menuButton, { backgroundColor: colors.surface2 }]}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[styles.menuIcon, { color: colors.text }]}>☰</Text>
+            {receivedCount > 0 && (
+              <View style={[styles.menuBadgeDot, { backgroundColor: colors.primary }]} />
+            )}
+          </TouchableOpacity>
+        ),
+        headerTitle: () => (
+          <View style={styles.headerTitle}>
+            <View style={[styles.logoBadge, { backgroundColor: colors.primary }]}>
+              <Text style={styles.logoLetter}>D</Text>
+            </View>
+            <View>
+              <Text style={[styles.brandName, { color: colors.text }]}>DropLink</Text>
+              <Text style={[styles.tagline, { color: colors.subtext }]}>
+                Private · Fast · Local
+              </Text>
+            </View>
+          </View>
+        ),
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.muted,
+        tabBarStyle: [
+          styles.tabBar,
+          {
+            backgroundColor: colors.bg,
+            borderTopColor: colors.border,
+          },
+        ],
         tabBarLabelStyle: styles.tabLabel,
         tabBarItemStyle: styles.tabItem,
-        tabBarShowLabel: true,
       }}
     >
       <Tabs.Screen
@@ -59,14 +88,14 @@ export default function TabLayout() {
         options={{
           title: 'Local Share',
           tabBarLabel: 'Local Share',
-          tabBarIcon: ({ color, focused }) => (
-            <View style={[styles.tabIconWrap, focused && styles.tabIconWrapActive]}>
-              <Ionicons
-                name={focused ? 'wifi' : 'wifi-outline'}
-                size={22}
-                color={focused ? THEME.primary : THEME.textMuted}
-              />
-            </View>
+          tabBarIcon: ({ focused }) => (
+            <TabIcon
+              symbol="⊕"
+              focused={focused}
+              activeColor={colors.primary}
+              activeFade={colors.primaryFade}
+              inactiveColor={colors.muted}
+            />
           ),
         }}
       />
@@ -75,14 +104,14 @@ export default function TabLayout() {
         options={{
           title: 'Internet Share',
           tabBarLabel: 'Internet Share',
-          tabBarIcon: ({ color, focused }) => (
-            <View style={[styles.tabIconWrap, focused && styles.tabIconWrapActive]}>
-              <Ionicons
-                name={focused ? 'globe' : 'globe-outline'}
-                size={22}
-                color={focused ? THEME.primary : THEME.textMuted}
-              />
-            </View>
+          tabBarIcon: ({ focused }) => (
+            <TabIcon
+              symbol="◎"
+              focused={focused}
+              activeColor={colors.accent}
+              activeFade={colors.accentFade}
+              inactiveColor={colors.muted}
+            />
           ),
         }}
       />
@@ -91,94 +120,83 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
-  /* Header Brand */
+  menuButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 16,
+    marginRight: 4,
+    position: 'relative',
+  },
+  menuIcon: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  menuBadgeDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
   headerTitle: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
-    gap: 12,
+    gap: 10,
   },
   logoBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
+    width: 34,
+    height: 34,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: THEME.primaryDark,
-    shadowColor: THEME.primary,
-    shadowOpacity: 0.5,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 10,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
+    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 3,
   },
-  brandCopy: {
-    justifyContent: 'center',
-  },
-  brandTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  logoLetter: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '900',
   },
   brandName: {
-    fontSize: 20,
-    lineHeight: 23,
+    fontSize: 17,
     fontWeight: '800',
-    color: THEME.textPrimary,
-    letterSpacing: -0.4,
+    letterSpacing: -0.3,
+    lineHeight: 19,
   },
-  proBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    backgroundColor: 'rgba(59, 130, 246, 0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.35)',
-  },
-  proBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: THEME.primary,
-    letterSpacing: 0.6,
-  },
-  brandTagline: {
-    marginTop: 2,
-    fontSize: 11,
+  tagline: {
+    fontSize: 10,
     fontWeight: '600',
-    color: THEME.textMuted,
-    letterSpacing: 0.2,
+    marginTop: 1,
   },
-
-  /* Tab Bar */
   tabBar: {
-    height: 66,
-    backgroundColor: THEME.bg,
     borderTopWidth: 1,
-    borderTopColor: THEME.border,
-    paddingTop: 6,
-    paddingBottom: 8,
+    height: 64,
+    paddingBottom: 6,
+    paddingTop: 4,
     elevation: 0,
   },
-  tabItem: {
-    height: 52,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  tabItem: { height: 58 },
   tabLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
-    marginTop: 2,
-    letterSpacing: 0.2,
+    marginTop: -2,
   },
-  tabIconWrap: {
-    width: 48,
-    height: 30,
+  iconWrap: {
+    width: 34,
+    height: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 12,
+    borderRadius: 8,
   },
-  tabIconWrapActive: {
-    backgroundColor: THEME.tabActiveBg,
+  iconText: {
+    fontSize: 20,
   },
 });

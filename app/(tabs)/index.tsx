@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 
 import { pickFiles } from '@/lib/nativeFilePicker';
-import { LocalShareDashboard } from '@/components/localshare/LocalShareDashboard';
+import LocalShareDashboard from '@/components/localshare/LocalShareDashboard';
 import { openFile } from '@/lib/openFile';
 
 import {
