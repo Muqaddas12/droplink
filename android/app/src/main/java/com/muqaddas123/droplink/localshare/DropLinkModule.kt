@@ -280,29 +280,37 @@ val sharedFiles =
     fun getReceivedFiles(
         promise: Promise
     ) {
-
         try {
-
             val currentServer =
                 server
 
-            if (currentServer == null) {
+            val inMemory =
+                currentServer?.getReceivedFiles() ?: emptyList()
 
-                promise.resolve(
-                    Arguments.createArray()
-                )
+            val diskFiles =
+                if (currentServer != null) {
+                    currentServer.scanReceivedFiles()
+                } else {
+                    LocalHttpServer(
+                        reactContext.contentResolver,
+                        "DropLink device"
+                    ).scanReceivedFiles()
+                }
 
-                return
+            val map = LinkedHashMap<String, ReceivedFile>()
+            for (f in inMemory) {
+                map[f.path] = f
+            }
+            for (f in diskFiles) {
+                map[f.path] = f
             }
 
             promise.resolve(
                 createReceivedFilesArray(
-                    currentServer.getReceivedFiles()
+                    map.values.toList()
                 )
             )
-
         } catch (e: Exception) {
-
             promise.reject(
                 "GET_RECEIVED_FILES_ERROR",
                 e.message,

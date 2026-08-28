@@ -32,7 +32,7 @@ function TabIcon({
 }
 
 export default function TabLayout() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { openSidebar, receivedCount } = useSidebar();
 
   return (
@@ -42,8 +42,12 @@ export default function TabLayout() {
         headerStyle: {
           backgroundColor: colors.bg,
         },
+        headerTintColor: colors.text,
         headerShadowVisible: false,
         headerTitleAlign: 'left',
+        sceneStyle: {
+          backgroundColor: colors.bg,
+        },
         headerLeft: () => (
           <TouchableOpacity
             onPress={openSidebar}
@@ -53,7 +57,7 @@ export default function TabLayout() {
           >
             <Text style={[styles.menuIcon, { color: colors.text }]}>☰</Text>
             {receivedCount > 0 && (
-              <View style={[styles.menuBadgeDot, { backgroundColor: colors.primary }]} />
+              <View style={[styles.menuBadgeDot, { backgroundColor: colors.primary, borderColor: colors.bg }]} />
             )}
           </TouchableOpacity>
         ),
@@ -75,7 +79,7 @@ export default function TabLayout() {
         tabBarStyle: [
           styles.tabBar,
           {
-            backgroundColor: colors.bg,
+            backgroundColor: colors.surface1,
             borderTopColor: colors.border,
           },
         ],
@@ -138,11 +142,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 6,
     right: 6,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
     borderWidth: 1.5,
-    borderColor: '#FFFFFF',
   },
   headerTitle: {
     flexDirection: 'row',

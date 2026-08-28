@@ -1,7 +1,12 @@
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { StatusBar } from 'react-native';
+import {
+  ThemeProvider as NavigationThemeProvider,
+  DarkTheme,
+  DefaultTheme,
+} from '@react-navigation/native';
 
 import { AppLaunchOverlay } from '@/components/AppLaunchOverlay';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
@@ -17,8 +22,24 @@ SplashScreen.preventAutoHideAsync();
 function RootNavigator() {
   const { isDark, colors } = useTheme();
 
+  const navTheme = useMemo(() => {
+    const baseTheme = isDark ? DarkTheme : DefaultTheme;
+    return {
+      ...baseTheme,
+      dark: isDark,
+      colors: {
+        ...baseTheme.colors,
+        background: colors.bg,
+        card: colors.surface1,
+        text: colors.text,
+        border: colors.border,
+        primary: colors.primary,
+      },
+    };
+  }, [isDark, colors]);
+
   return (
-    <>
+    <NavigationThemeProvider value={navTheme}>
       <StatusBar
         barStyle={isDark ? 'light-content' : 'dark-content'}
         backgroundColor={colors.bg}
@@ -33,10 +54,11 @@ function RootNavigator() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="received-files" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
+        <Stack.Screen name="contact" options={{ headerShown: false }} />
       </Stack>
       <Sidebar />
       <AppLaunchOverlay />
-    </>
+    </NavigationThemeProvider>
   );
 }
 

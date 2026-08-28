@@ -201,60 +201,60 @@ fun scanReceivedFiles(): List<ReceivedFile> {
             "DropLink"
         )
 
-    if (!root.exists() || !root.isDirectory) {
-        synchronized(receivedFiles) {
-            receivedFiles.clear()
-        }
-
-        return emptyList()
-    }
-
     val scannedFiles =
         mutableListOf<ReceivedFile>()
 
-    root.walkTopDown()
-        .filter { file ->
-            file.isFile
-        }
-        .forEach { file ->
+    if (root.exists() && root.isDirectory) {
+        root.walkTopDown()
+            .filter { file ->
+                file.isFile
+            }
+            .forEach { file ->
 
-            val category =
-                file.parentFile
-                    ?.name
-                    ?: "Others"
+                val category =
+                    file.parentFile
+                        ?.name
+                        ?: "Others"
 
-            val mimeType =
-                android.webkit.MimeTypeMap
-                    .getSingleton()
-                    .getMimeTypeFromExtension(
-                        file.extension.lowercase()
+                val mimeType =
+                    android.webkit.MimeTypeMap
+                        .getSingleton()
+                        .getMimeTypeFromExtension(
+                            file.extension.lowercase()
+                        )
+                        ?: "application/octet-stream"
+
+                scannedFiles.add(
+                    ReceivedFile(
+                        name = file.name,
+                        mimeType = mimeType,
+                        size = file.length(),
+                        path = file.absolutePath,
+                        category = category
                     )
-                    ?: "application/octet-stream"
-
-            scannedFiles.add(
-                ReceivedFile(
-                    name = file.name,
-                    mimeType = mimeType,
-                    size = file.length(),
-                    path = file.absolutePath,
-                    category = category
                 )
-            )
-        }
-
-    // Newest files first
-    scannedFiles.sortByDescending { file ->
-
-        File(file.path).lastModified()
+            }
     }
 
     synchronized(receivedFiles) {
+        val map = LinkedHashMap<String, ReceivedFile>()
+        for (f in receivedFiles) {
+            map[f.path] = f
+        }
+        for (f in scannedFiles) {
+            map[f.path] = f
+        }
+
+        val mergedList = map.values.toList().sortedByDescending { file ->
+            try {
+                File(file.path).lastModified()
+            } catch (_: Exception) {
+                0L
+            }
+        }
 
         receivedFiles.clear()
-
-        receivedFiles.addAll(
-            scannedFiles
-        )
+        receivedFiles.addAll(mergedList)
 
         return receivedFiles.toList()
     }

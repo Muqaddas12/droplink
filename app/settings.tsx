@@ -221,9 +221,9 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Section 4: About DropLink */}
+        {/* Section 4: About & Support */}
         <View style={styles.section}>
-          <Text style={[styles.sectionHeader, { color: colors.primary }]}>ABOUT</Text>
+          <Text style={[styles.sectionHeader, { color: colors.primary }]}>ABOUT & SUPPORT</Text>
 
           <View style={[styles.infoCard, { backgroundColor: colors.surface1, borderColor: colors.border }]}>
             <View style={styles.aboutHeader}>
@@ -241,6 +241,17 @@ export default function SettingsScreen() {
             <Text style={[styles.aboutDesc, { color: colors.subtext }]}>
               High-speed, private, open-architecture file sharing for mobile and desktop.
             </Text>
+
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+            <TouchableOpacity
+              onPress={() => router.push('/contact' as any)}
+              style={[styles.manageFilesBtn, { backgroundColor: colors.primaryFade }]}
+            >
+              <Text style={[styles.manageFilesText, { color: colors.primary }]}>
+                💬 Contact Us & Support →
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </ScrollView>

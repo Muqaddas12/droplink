@@ -1,7 +1,8 @@
-﻿import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 
 export function AppLaunchOverlay() {
+  const [visible, setVisible] = useState(true);
   const opacity  = useRef(new Animated.Value(1)).current;
   const scale    = useRef(new Animated.Value(0.88)).current;
   const ring1    = useRef(new Animated.Value(0)).current;
@@ -24,13 +25,20 @@ export function AppLaunchOverlay() {
     const r3 = makeRing(ring3, 800);
     r1.start(); r2.start(); r3.start();
 
-    // Fade in content, then fade out overlay
+    // Fade in content, then fade out overlay and unmount
     Animated.sequence([
       Animated.timing(scale, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.delay(900),
       Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }),
-    ]).start(() => { r1.stop(); r2.stop(); r3.stop(); });
+    ]).start(() => {
+      r1.stop();
+      r2.stop();
+      r3.stop();
+      setVisible(false);
+    });
   }, [opacity, scale, ring1, ring2, ring3]);
+
+  if (!visible) return null;
 
   const makeRingStyle = (val: Animated.Value, size: number) => ({
     width:     size,

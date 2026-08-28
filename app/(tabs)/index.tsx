@@ -1,38 +1,42 @@
 import React, {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
+    useCallback,
+    useEffect,
+    useRef,
+    useState,
 } from 'react';
 
 import {
-  Alert,
-  PermissionsAndroid,
-  Platform,
-  AppState,
-  Share,
+    Alert,
+    AppState,
+    PermissionsAndroid,
+    Platform,
+    Share,
+    View,
 } from 'react-native';
 
-import { pickFiles } from '@/lib/nativeFilePicker';
 import LocalShareDashboard from '@/components/localshare/LocalShareDashboard';
+import { useSidebar } from '@/context/SidebarContext';
+import { useTheme } from '@/context/ThemeContext';
+import { pickFiles } from '@/lib/nativeFilePicker';
 import { openFile } from '@/lib/openFile';
 
 import {
-  addLocalShareFiles,
-  getLocalReceivedFiles,
-  scanLocalReceivedFiles,
-  getLocalServerStatus,
-  getLocalSharedFiles,
-  getNetworkInfo,
-  ReceivedFile,
-  ServerInfo,
-  ServerStatus,
-  SharedFile,
-  startLocalServer,
-  stopLocalServer,
+    addLocalShareFiles,
+    getLocalServerStatus,
+    getLocalSharedFiles,
+    getNetworkInfo,
+    ReceivedFile,
+    scanLocalReceivedFiles,
+    ServerInfo,
+    ServerStatus,
+    SharedFile,
+    startLocalServer,
+    stopLocalServer
 } from '@/lib/nativeDropLink';
 
 export default function TabOneScreen() {
+  const { colors } = useTheme();
+  const { setReceivedCount } = useSidebar();
 
   // =========================================================
   // STATE
@@ -134,6 +138,8 @@ const handleReceivedFilePress = async (
 
         const allReceived =
           await scanLocalReceivedFiles();
+
+        setReceivedCount(allReceived.length);
 
         if (running) {
 
@@ -678,22 +684,24 @@ const handleReceivedFilePress = async (
   // =========================================================
 
   return (
-    <LocalShareDashboard
-      isServerStarted={isServerStarted}
-      loading={loading}
-      refreshing={refreshing}
-      receivedFiles={receivedFiles}
-      serverInfo={serverInfo}
-      sharedFiles={sharedFiles}
-      totalReceivedSize={totalReceivedSize}
-      totalSharedSize={totalSharedSize}
-      onOpenReceivedFile={handleReceivedFilePress}
-      onRefresh={handleRefresh}
-      onStartEmptyServer={handleStartEmptyServer}
-      onSelectFiles={handleSelectFiles}
-      onShareUrl={handleShareUrl}
-      onStopServer={handleStop}
-    />
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <LocalShareDashboard
+        isServerStarted={isServerStarted}
+        loading={loading}
+        refreshing={refreshing}
+        receivedFiles={receivedFiles}
+        serverInfo={serverInfo}
+        sharedFiles={sharedFiles}
+        totalReceivedSize={totalReceivedSize}
+        totalSharedSize={totalSharedSize}
+        onOpenReceivedFile={handleReceivedFilePress}
+        onRefresh={handleRefresh}
+        onStartEmptyServer={handleStartEmptyServer}
+        onSelectFiles={handleSelectFiles}
+        onShareUrl={handleShareUrl}
+        onStopServer={handleStop}
+      />
+    </View>
   );
 }
 

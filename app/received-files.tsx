@@ -1,6 +1,6 @@
 import { useSidebar } from '@/context/SidebarContext';
 import { useTheme } from '@/context/ThemeContext';
-import { ReceivedFile, scanLocalReceivedFiles } from '@/lib/nativeDropLink';
+import { getLocalReceivedFiles, ReceivedFile, scanLocalReceivedFiles } from '@/lib/nativeDropLink';
 import { openFile } from '@/lib/openFile';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -62,9 +62,34 @@ export default function ReceivedFilesScreen() {
 
   const loadFiles = useCallback(async () => {
     try {
-      const scanned = await scanLocalReceivedFiles();
-      setFiles(scanned);
-      setReceivedCount(scanned.length);
+      const [scannedRes, inMemoryRes] = await Promise.allSettled([
+        scanLocalReceivedFiles(),
+        getLocalReceivedFiles(),
+      ]);
+
+      const seenPaths = new Set<string>();
+      const combined: ReceivedFile[] = [];
+
+      if (scannedRes.status === 'fulfilled' && Array.isArray(scannedRes.value)) {
+        for (const file of scannedRes.value) {
+          if (file && file.path && !seenPaths.has(file.path)) {
+            seenPaths.add(file.path);
+            combined.push(file);
+          }
+        }
+      }
+
+      if (inMemoryRes.status === 'fulfilled' && Array.isArray(inMemoryRes.value)) {
+        for (const file of inMemoryRes.value) {
+          if (file && file.path && !seenPaths.has(file.path)) {
+            seenPaths.add(file.path);
+            combined.push(file);
+          }
+        }
+      }
+
+      setFiles(combined);
+      setReceivedCount(combined.length);
     } catch (err) {
       console.warn('Error loading received files:', err);
     } finally {

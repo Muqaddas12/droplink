@@ -164,6 +164,7 @@ export function Sidebar() {
   const isHomeActive = pathname === '/' || pathname === '/(tabs)' || pathname.startsWith('/(tabs)');
   const isReceivedActive = pathname === '/received-files';
   const isSettingsActive = pathname === '/settings';
+  const isContactActive = pathname === '/contact';
 
   return (
     <View style={styles.modalRoot} pointerEvents="box-none">
@@ -245,6 +246,15 @@ export function Sidebar() {
             isActive={isSettingsActive}
             colors={colors}
             onPress={() => navigateTo('/settings')}
+          />
+
+          <NavItem
+            icon="💬"
+            title="Contact Us"
+            subtitle="Support, feedback & FAQ"
+            isActive={isContactActive}
+            colors={colors}
+            onPress={() => navigateTo('/contact')}
           />
         </View>
 
