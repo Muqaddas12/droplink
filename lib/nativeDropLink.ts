@@ -1,4 +1,4 @@
-﻿import {
+import {
   NativeModules,
   Platform,
 } from 'react-native';
@@ -42,7 +42,7 @@ export type ServerInfo = {
   ip: string;
   port: number;
   url: string;
-  /** Friendly mDNS hostname — resolves natively in iOS/macOS Safari on the same LAN */
+  /** mDNS hostname advertised on the same Wi-Fi or Ethernet LAN */
   mdnsName?: string;
 };
 

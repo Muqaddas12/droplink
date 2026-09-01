@@ -3,8 +3,7 @@ package com.muqaddas123.droplink.localshare
 
 import android.content.Context
 import android.net.Uri
-import android.net.nsd.NsdManager
-import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -12,6 +11,8 @@ import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import javax.jmdns.JmDNS
+import javax.jmdns.ServiceInfo
 
 class DropLinkModule(
     private val reactContext: ReactApplicationContext
@@ -23,40 +24,44 @@ class DropLinkModule(
     // NSD / mDNS
     // =========================================================
 
-    private var nsdManager: NsdManager? = null
-    private var nsdListener: NsdManager.RegistrationListener? = null
+    private val mdnsResponders = mutableListOf<JmDNS>()
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     private fun registerNsd(port: Int) {
+        unregisterNsd()
         try {
-            val mgr = reactContext.getSystemService(Context.NSD_SERVICE) as? NsdManager
-                ?: return
-
-            val listener = object : NsdManager.RegistrationListener {
-                override fun onRegistrationFailed(si: NsdServiceInfo, code: Int) {}
-                override fun onUnregistrationFailed(si: NsdServiceInfo, code: Int) {}
-                override fun onServiceRegistered(si: NsdServiceInfo) {}
-                override fun onServiceUnregistered(si: NsdServiceInfo) {}
+            val wifiManager = reactContext.applicationContext
+                .getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            multicastLock = wifiManager?.createMulticastLock("DropLink-mDNS")?.apply {
+                setReferenceCounted(false)
+                acquire()
             }
 
-            val serviceInfo = NsdServiceInfo().apply {
-                serviceName = "DropLink"
-                serviceType = "_http._tcp."
-                this.port   = port
+            NetworkUtils.getLocalNetworkIpv4Addresses().forEach { address ->
+                JmDNS.create(address, "droplink.local.").also { responder ->
+                    responder.registerService(
+                        ServiceInfo.create("_http._tcp.local.", "DropLink", port, 0, 0, "path=/")
+                    )
+                    mdnsResponders += responder
+                }
             }
-
-            mgr.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
-            nsdManager = mgr
-            nsdListener = listener
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            unregisterNsd()
+        }
     }
 
     private fun unregisterNsd() {
+        mdnsResponders.forEach { responder ->
+            try {
+                responder.unregisterAllServices()
+                responder.close()
+            } catch (_: Exception) {}
+        }
+        mdnsResponders.clear()
         try {
-            val listener = nsdListener ?: return
-            nsdManager?.unregisterService(listener)
+            multicastLock?.release()
         } catch (_: Exception) {}
-        nsdManager  = null
-        nsdListener = null
+        multicastLock = null
     }
 
     override fun getName(): String {
@@ -122,9 +127,9 @@ val sharedFiles =
             }
 
             val url =
-                "http://$ip:$port"
+                "http://droplink.local:$port"
 
-            // Register mDNS/NSD so iOS/Mac devices can discover "droplink.local"
+            // Register the DropLink mDNS service on every active local network.
             unregisterNsd()
             registerNsd(port)
 
@@ -445,7 +450,7 @@ val sharedFiles =
 
                 result.putString(
                     "url",
-                    "http://$ip:${currentServer.port}"
+                    "http://droplink.local:${currentServer.port}"
                 )
 
             } else {
@@ -722,7 +727,7 @@ val sharedFiles =
             url
         )
 
-        // Friendly mDNS name (resolves natively on iOS/macOS Safari)
+        // Friendly mDNS hostname advertised for local-network discovery.
         putString(
             "mdnsName",
             "droplink.local"

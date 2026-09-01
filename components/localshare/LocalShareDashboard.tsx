@@ -226,8 +226,8 @@ export default function LocalShareDashboard({
             </View>
             {serverInfo.mdnsName && (
               <View style={[styles.mdnsChip, { backgroundColor: colors.surface3 }]}>
-                <Text style={[styles.mdnsText, { color: colors.subtext }]}>Also: {serverInfo.mdnsName}</Text>
-                <Text style={[styles.mdnsInfo, { color: colors.primary }]}>ⓘ iOS/Mac only</Text>
+                <Text style={[styles.mdnsText, { color: colors.subtext }]}>LAN name: {serverInfo.mdnsName}:{serverInfo.port}</Text>
+                <Text style={[styles.mdnsInfo, { color: colors.primary }]}>ⓘ Wi-Fi / Ethernet</Text>
               </View>
             )}
           </View>

@@ -1,26 +1,26 @@
 import React, { useState } from 'react';
 import {
-  Alert,
-  Clipboard,
-  Pressable,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  View,
+    Alert,
+    Clipboard,
+    Pressable,
+    ScrollView,
+    Share,
+    StyleSheet,
+    Text,
+    View,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
 import { useTheme } from '@/context/ThemeContext';
 import { pickFiles } from '@/lib/nativeFilePicker';
-import { openFile } from '@/lib/openFile';
 import {
-  createInternetServer,
-  pauseInternetServer,
-  resumeInternetServer,
-  stopInternetServer,
-  InternetServerInfo,
+    createInternetServer,
+    InternetServerInfo,
+    pauseInternetServer,
+    resumeInternetServer,
+    stopInternetServer,
 } from '@/lib/nativeInternetTransfer';
+import { openFile } from '@/lib/openFile';
 
 type PickedFile = Awaited<ReturnType<typeof pickFiles>>[number];
 
@@ -96,6 +96,7 @@ export default function TabTwoScreen() {
       await stopInternetServer();
       setServerInfo(null);
       setPaused(false);
+      setSelectedFiles([]);
     } catch (error) {
       Alert.alert('Error', String(error));
     }

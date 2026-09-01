@@ -277,6 +277,7 @@ fun scanReceivedFiles(): List<ReceivedFile> {
    // Load previously received files
     // from Download/DropLink
     scanReceivedFiles()
+        // Android apps cannot bind privileged ports below 1024; use an available non-privileged port.
         serverSocket =
             ServerSocket(0)
 
@@ -493,7 +494,8 @@ fun scanReceivedFiles(): List<ReceivedFile> {
 
                         sendFile(
                             output,
-                            decodedPath
+                            decodedPath,
+                            request
                         )
                     }
 
@@ -942,7 +944,7 @@ $downloadText
 <a
     class="download"
     href="/download/$index/$encodedName"
-    onclick="downloadFile($index, '$encodedName', ${file.size}, event)"
+
 >
 Download
 </a>
@@ -1598,206 +1600,111 @@ setInterval(
 
     private fun sendFile(
         output: BufferedOutputStream,
-        path: String
+        path: String,
+        request: String
     ) {
-
-        val parts =
-            path
-                .removePrefix("/")
-                .split("/")
-
-        if (
-            parts.size < 2 ||
-            parts[0] !=
-            "download"
-        ) {
-
-            sendText(
-                output,
-                "404 Not Found",
-                "File not found"
-            )
-
+        val parts = path.removePrefix("/").split("/")
+        if (parts.size < 2 || parts[0] != "download") {
+            sendText(output, "404 Not Found", "File not found")
             return
         }
 
-        val index =
-            parts[1]
-                .toIntOrNull()
-
-        if (
-            index == null
-        ) {
-
-            sendText(
-                output,
-                "404 Not Found",
-                "Invalid file index"
-            )
-
+        val index = parts[1].toIntOrNull()
+        if (index == null) {
+            sendText(output, "404 Not Found", "Invalid file index")
             return
         }
 
-        val file =
-            synchronized(sharedFiles) {
+        val file = synchronized(sharedFiles) { sharedFiles.getOrNull(index) }
+        if (file == null) {
+            sendText(output, "404 Not Found", "File not found")
+            return
+        }
 
-                sharedFiles
-                    .getOrNull(
-                        index
-                    )
-            }
-
-        if (
-            file == null
-        ) {
-
-            sendText(
-                output,
-                "404 Not Found",
-                "File not found"
-            )
-
+        val totalSize = file.size
+        val rangeStart = parseRangeStart(getHeader(request, "Range"), totalSize)
+        if (rangeStart == INVALID_RANGE) {
+            val header = "HTTP/1.1 416 Range Not Satisfiable\r\n" +
+                "Content-Range: bytes */$totalSize\r\n" +
+                "Connection: close\r\n\r\n"
+            output.write(header.toByteArray(Charsets.UTF_8))
+            output.flush()
             return
         }
 
         try {
-
-            val inputStream =
-                contentResolver
-                    .openInputStream(
-                        file.uri
-                    )
-
-            if (
-                inputStream == null
-            ) {
-
-                sendText(
-                    output,
-                    "404 Not Found",
-                    "Unable to open selected file"
-                )
-
+            val inputStream = contentResolver.openInputStream(file.uri)
+            if (inputStream == null) {
+                sendText(output, "404 Not Found", "Unable to open selected file")
                 return
             }
 
             inputStream.use { input ->
-
-                val mimeType =
-                    file.mimeType
-                        ?: "application/octet-stream"
-
-                val safeName =
-                    escapeHeader(
-                        file.name
-                    )
-
-                val header =
-                    buildString {
-
-                        append(
-                            "HTTP/1.1 200 OK\r\n"
-                        )
-
-                        append(
-                            "Content-Type: $mimeType\r\n"
-                        )
-
-                        if (
-                            file.size > 0
-                        ) {
-
-                            append(
-                                "Content-Length: ${file.size}\r\n"
-                            )
-                        }
-
-                        append(
-                            "Content-Disposition: attachment; filename=\"$safeName\"\r\n"
-                        )
-
-                        append(
-                            "Cache-Control: no-cache\r\n"
-                        )
-
-                        append(
-                            "Connection: close\r\n"
-                        )
-
-                        append(
-                            "\r\n"
-                        )
-                    }
-
-                output.write(
-                    header.toByteArray(
-                        Charsets.UTF_8
-                    )
-                )
-
-                output.flush()
-
-                val buffer =
-                    ByteArray(
-                        1024 * 1024
-                    )
-
-                var completed =
-                    true
-
-                while (true) {
-
-                    val bytesRead =
-                        input.read(
-                            buffer
-                        )
-
-                    if (
-                        bytesRead ==
-                        -1
-                    ) {
-
-                        break
-                    }
-
-                    output.write(
-                        buffer,
-                        0,
-                        bytesRead
-                    )
+                if (rangeStart > 0L && !skipFully(input, rangeStart)) {
+                    sendText(output, "416 Range Not Satisfiable", "Unable to resume this file")
+                    return
                 }
 
+                val mimeType = file.mimeType ?: "application/octet-stream"
+                val safeName = escapeHeader(file.name)
+                val partial = rangeStart > 0L
+                val contentLength = if (totalSize > 0L) totalSize - rangeStart else -1L
+                val header = buildString {
+                    append(if (partial) "HTTP/1.1 206 Partial Content\r\n" else "HTTP/1.1 200 OK\r\n")
+                    append("Content-Type: $mimeType\r\n")
+                    append("Accept-Ranges: bytes\r\n")
+                    if (partial && totalSize > 0L) append("Content-Range: bytes $rangeStart-${totalSize - 1}/$totalSize\r\n")
+                    if (contentLength >= 0L) append("Content-Length: $contentLength\r\n")
+                    append("Content-Disposition: attachment; filename=\"$safeName\"\r\n")
+                    append("Cache-Control: no-cache\r\n")
+                    append("Connection: close\r\n\r\n")
+                }
+                output.write(header.toByteArray(Charsets.UTF_8))
                 output.flush()
 
-                /*
-                 * Only count a download when
-                 * the complete file stream finished.
-                 */
-                if (completed) {
+                val buffer = ByteArray(1024 * 1024)
+                while (true) {
+                    val bytesRead = input.read(buffer)
+                    if (bytesRead == -1) break
+                    output.write(buffer, 0, bytesRead)
+                }
+                output.flush()
 
-                    synchronized(sharedFiles) {
-
-                        file.downloadCount++
-
-                        android.util.Log.d(
-                            "DropLink",
-                            "DOWNLOAD COMPLETE: " +
-                                file.name +
-                                " count=" +
-                                file.downloadCount
-                        )
-                    }
+                synchronized(sharedFiles) {
+                    file.downloadCount++
+                    android.util.Log.d("DropLink", "DOWNLOAD COMPLETE: ${file.name} count=${file.downloadCount}")
                 }
             }
-
         } catch (e: Exception) {
-
-            android.util.Log.e(
-                "DropLink",
-                "DOWNLOAD ERROR",
-                e
-            )
+            android.util.Log.e("DropLink", "DOWNLOAD ERROR", e)
         }
+    }
+
+    private fun parseRangeStart(rangeHeader: String?, totalSize: Long): Long {
+        if (rangeHeader.isNullOrBlank()) return 0L
+        if (totalSize <= 0L || !rangeHeader.startsWith("bytes=")) return INVALID_RANGE
+        val start = rangeHeader.removePrefix("bytes=").substringBefore("-").trim().toLongOrNull()
+            ?: return INVALID_RANGE
+        return if (start in 0 until totalSize) start else INVALID_RANGE
+    }
+
+    private fun skipFully(input: java.io.InputStream, bytesToSkip: Long): Boolean {
+        var remaining = bytesToSkip
+        while (remaining > 0L) {
+            val skipped = input.skip(remaining)
+            if (skipped > 0L) {
+                remaining -= skipped
+            } else if (input.read() == -1) {
+                return false
+            } else {
+                remaining--
+            }
+        }
+        return true
+    }
+
+    companion object {
+        private const val INVALID_RANGE = -1L
     }
 
     // =========================================================

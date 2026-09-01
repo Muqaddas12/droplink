@@ -239,11 +239,11 @@ class InternetTransferModule(
              */
 
             val ip =
-                network.address.hostAddress
+                NetworkUtils.cleanHostAddress(network.address)
 
 
             if (
-                ip.isNullOrBlank()
+                ip.isBlank()
             ) {
 
                 promise.reject(
@@ -509,16 +509,13 @@ class InternetTransferModule(
         ip: String,
         port: Int
     ): String {
-
+        val cleanIp = if (ip.contains("%")) ip.substringBefore("%") else ip
         return if (
-            ip.contains(":")
+            cleanIp.contains(":")
         ) {
-
-            "http://[$ip]:$port/"
-
+            "http://[$cleanIp]:$port/"
         } else {
-
-            "http://$ip:$port/"
+            "http://$cleanIp:$port/"
         }
     }
 

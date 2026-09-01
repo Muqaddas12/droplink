@@ -3,6 +3,7 @@ package com.muqaddas123.droplink.internetshare
 import android.content.Context
 import java.net.Inet4Address
 import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.NetworkInterface
 
 data class NetworkInfo(
@@ -13,655 +14,229 @@ data class NetworkInfo(
 
 object NetworkUtils {
 
-    /*
-     * =========================================================
-     * GENERAL NETWORK INFO
-     * =========================================================
-     *
-     * Used when the app simply wants to know
-     * whether some usable network exists.
-     *
-     * This uses Internet preference.
-     */
     fun getNetworkInfo(
         context: Context
     ): NetworkInfo {
-
-        val network =
-            getInternetNetworkAddress()
-
+        val network = getPreferredAddress()
         if (network != null) {
-
             return NetworkInfo(
                 connected = true,
-                ip = network.address.hostAddress,
+                ip = cleanHostAddress(network.address),
                 type = network.type
-            )
-        }
-
-        /*
-         * If Internet address isn't available,
-         * check local network.
-         */
-        val local =
-            getLocalNetworkAddress()
-
-        if (local != null) {
-
-            return NetworkInfo(
-                connected = true,
-                ip = local.address.hostAddress,
-                type = local.type
             )
         }
 
         return NetworkInfo(
             connected = false,
             ip = null,
-            type = "Unknown"
+            type = "None"
         )
     }
 
-
-    /*
-     * =========================================================
-     * LOCAL SHARE
-     * =========================================================
-     *
-     * Use this ONLY for Local Share.
-     *
-     * Allowed:
-     *
-     *   wlan
-     *   wifi
-     *   ap
-     *   eth
-     *
-     * NEVER:
-     *
-     *   rmnet
-     *   cellular
-     *
-     * Preference:
-     *
-     *   1. Wi-Fi/Hotspot IPv4
-     *   2. Wi-Fi/Hotspot IPv6
-     *   3. Ethernet IPv4
-     *   4. Ethernet IPv6
+    /**
+     * Local network address (prefer IPv4 on Wi-Fi/Hotspot/Ethernet)
      */
-    fun getLocalNetworkAddress():
-        NetworkAddress? {
+    fun getLocalNetworkAddress(): NetworkAddress? {
+        val candidates = getIpCandidates()
 
-        val candidates =
-            getIpCandidates()
-
-
-        /*
-         * 1. Wi-Fi / Hotspot IPv4
-         */
-
-        val wifiIpv4 =
-            candidates.firstOrNull {
-
-                isLocalInterface(it) &&
-
+        // 1. Wi-Fi / Hotspot IPv4
+        val wifiIpv4 = candidates.firstOrNull {
+            isLocalInterface(it) &&
                 it.address is Inet4Address &&
-
                 !it.address.isLoopbackAddress &&
-
                 !it.address.isLinkLocalAddress
-            }
-
-        if (wifiIpv4 != null) {
-
-            android.util.Log.d(
-                "DropLinkNetwork",
-                "LOCAL SHARE IPv4: " +
-                    wifiIpv4.address.hostAddress +
-                    " INTERFACE: " +
-                    wifiIpv4.interfaceName
-            )
-
-            return wifiIpv4
         }
+        if (wifiIpv4 != null) return wifiIpv4
 
-
-        /*
-         * 2. Wi-Fi / Hotspot IPv6
-         */
-
-        val wifiIpv6 =
-            candidates.firstOrNull {
-
-                isLocalInterface(it) &&
-
-                it.address is Inet6Address &&
-
-                isUsableIpv6(
-                    it.address as Inet6Address
-                )
-            }
-
-        if (wifiIpv6 != null) {
-
-            android.util.Log.d(
-                "DropLinkNetwork",
-                "LOCAL SHARE IPv6: " +
-                    wifiIpv6.address.hostAddress +
-                    " INTERFACE: " +
-                    wifiIpv6.interfaceName
-            )
-
-            return wifiIpv6
-        }
-
-
-        /*
-         * 3. Ethernet IPv4
-         */
-
-        val ethernetIpv4 =
-            candidates.firstOrNull {
-
-                isEthernetInterface(it) &&
-
+        // 2. Ethernet IPv4
+        val ethIpv4 = candidates.firstOrNull {
+            isEthernetInterface(it) &&
                 it.address is Inet4Address &&
-
                 !it.address.isLoopbackAddress &&
-
                 !it.address.isLinkLocalAddress
-            }
-
-        if (ethernetIpv4 != null) {
-
-            android.util.Log.d(
-                "DropLinkNetwork",
-                "LOCAL SHARE Ethernet IPv4: " +
-                    ethernetIpv4.address.hostAddress +
-                    " INTERFACE: " +
-                    ethernetIpv4.interfaceName
-            )
-
-            return ethernetIpv4
         }
+        if (ethIpv4 != null) return ethIpv4
 
-
-        /*
-         * 4. Ethernet IPv6
-         */
-
-        val ethernetIpv6 =
-            candidates.firstOrNull {
-
-                isEthernetInterface(it) &&
-
+        // 3. Wi-Fi / Hotspot IPv6
+        val wifiIpv6 = candidates.firstOrNull {
+            isLocalInterface(it) &&
                 it.address is Inet6Address &&
-
-                isUsableIpv6(
-                    it.address as Inet6Address
-                )
-            }
-
-        if (ethernetIpv6 != null) {
-
-            android.util.Log.d(
-                "DropLinkNetwork",
-                "LOCAL SHARE Ethernet IPv6: " +
-                    ethernetIpv6.address.hostAddress +
-                    " INTERFACE: " +
-                    ethernetIpv6.interfaceName
-            )
-
-            return ethernetIpv6
+                isUsableIpv6(it.address as Inet6Address)
         }
+        if (wifiIpv6 != null) return wifiIpv6
 
-
-        /*
-         * DO NOT FALL BACK TO CELLULAR.
-         */
-
-        android.util.Log.d(
-            "DropLinkNetwork",
-            "LOCAL SHARE: No Wi-Fi, Hotspot or Ethernet"
-        )
+        // 4. Any other non-cellular IPv4
+        val otherIpv4 = candidates.firstOrNull {
+            it.type != "Cellular" &&
+                it.address is Inet4Address &&
+                !it.address.isLoopbackAddress &&
+                !it.address.isLinkLocalAddress
+        }
+        if (otherIpv4 != null) return otherIpv4
 
         return null
     }
 
-
-    /*
-     * =========================================================
-     * INTERNET SHARE
-     * =========================================================
-     *
-     * Use this ONLY for Internet Share.
-     *
-     * Preference:
-     *
-     *   1. rmnet_data1 IPv6
-     *   2. Other cellular IPv6
-     *
-     * We intentionally do NOT use Wi-Fi here as a fallback.
-     *
-     * Internet Share is intended to expose the address
-     * reachable through the Internet.
+    /**
+     * Internet Share address.
+     * Searches across Wi-Fi, Cellular, Hotspot, and all active interfaces.
      */
-    fun getInternetNetworkAddress():
-        NetworkAddress? {
+    fun getInternetNetworkAddress(): NetworkAddress? {
+        val candidates = getIpCandidates()
+        if (candidates.isEmpty()) return null
 
-        val candidates =
-            getIpCandidates()
-
-        /*
-         * Prefer Wi-Fi / hotspot when available. IPv6 is first because it can
-         * be globally routable without IPv4 port forwarding; IPv4 still allows
-         * fast transfers to receivers on the same Wi-Fi or hotspot.
-         */
-        val wifiIpv6 =
-            candidates.firstOrNull {
-                isLocalInterface(it) &&
-                    it.address is Inet6Address &&
-                    isUsableIpv6(it.address as Inet6Address)
-            }
-
-        if (wifiIpv6 != null) {
-            android.util.Log.d(
-                "DropLinkNetwork",
-                "INTERNET SHARE Wi-Fi IPv6: ${wifiIpv6.address.hostAddress} " +
-                    "INTERFACE: ${wifiIpv6.interfaceName}"
-            )
-            return wifiIpv6
-        }
-
-        val wifiIpv4 =
-            candidates.firstOrNull {
-                isLocalInterface(it) &&
-                    it.address is Inet4Address &&
-                    !it.address.isLoopbackAddress &&
-                    !it.address.isLinkLocalAddress
-            }
-
-        if (wifiIpv4 != null) {
-            android.util.Log.d(
-                "DropLinkNetwork",
-                "INTERNET SHARE Wi-Fi IPv4: ${wifiIpv4.address.hostAddress} " +
-                    "INTERFACE: ${wifiIpv4.interfaceName}"
-            )
-            return wifiIpv4
-        }
-
-        val ethernetIpv6 =
-            candidates.firstOrNull {
-                isEthernetInterface(it) &&
-                    it.address is Inet6Address &&
-                    isUsableIpv6(it.address as Inet6Address)
-            }
-
-        if (ethernetIpv6 != null) {
-            return ethernetIpv6
-        }
-
-        val ethernetIpv4 =
-            candidates.firstOrNull {
-                isEthernetInterface(it) &&
-                    it.address is Inet4Address &&
-                    !it.address.isLoopbackAddress &&
-                    !it.address.isLinkLocalAddress
-            }
-
-        if (ethernetIpv4 != null) {
-            return ethernetIpv4
-        }
-
-
-        /*
-         * 1. Preferred cellular interface:
-         *    rmnet_data1 IPv6
-         */
-
-        val rmnetData1 =
-            candidates.firstOrNull {
-
-                it.interfaceName.equals(
-                    "rmnet_data1",
-                    ignoreCase = true
-                ) &&
-
-                it.type == "Cellular" &&
-
-                it.address is Inet6Address &&
-
-                isUsableIpv6(
-                    it.address as Inet6Address
-                )
-            }
-
-        if (rmnetData1 != null) {
-
-            android.util.Log.d(
-                "DropLinkNetwork",
-                "INTERNET SHARE rmnet_data1 IPv6: " +
-                    rmnetData1.address.hostAddress
-            )
-
-            return rmnetData1
-        }
-
-
-        /*
-         * 2. Any other cellular IPv6
-         */
-
-        val cellularIpv6 =
-            candidates.firstOrNull {
-
-                it.type == "Cellular" &&
-
-                it.address is Inet6Address &&
-
-                isUsableIpv6(
-                    it.address as Inet6Address
-                )
-            }
-
-        if (cellularIpv6 != null) {
-
-            android.util.Log.d(
-                "DropLinkNetwork",
-                "INTERNET SHARE Cellular IPv6: " +
-                    cellularIpv6.address.hostAddress +
-                    " INTERFACE: " +
-                    cellularIpv6.interfaceName
-            )
-
-            return cellularIpv6
-        }
-
-
-        /*
-         * 3. Cellular IPv4 fallback.
-         *
-         * Note:
-         * Many mobile carriers use CGNAT, so this address
-         * may NOT be reachable directly from the Internet.
-         *
-         * It is returned only as a fallback.
-         */
-
-        val cellularIpv4 =
-            candidates.firstOrNull {
-
-                it.type == "Cellular" &&
-
+        // 1. Wi-Fi / Hotspot IPv4 (best for browser direct access on same router/hotspot)
+        val wifiIpv4 = candidates.firstOrNull {
+            isLocalInterface(it) &&
                 it.address is Inet4Address &&
-
                 !it.address.isLoopbackAddress &&
-
                 !it.address.isLinkLocalAddress
-            }
-
-        if (cellularIpv4 != null) {
-
-            android.util.Log.d(
-                "DropLinkNetwork",
-                "INTERNET SHARE Cellular IPv4: " +
-                    cellularIpv4.address.hostAddress
-            )
-
-            return cellularIpv4
         }
+        if (wifiIpv4 != null) return wifiIpv4
 
+        // 2. Usable IPv6 on Wi-Fi (often globally routable)
+        val wifiIpv6 = candidates.firstOrNull {
+            isLocalInterface(it) &&
+                it.address is Inet6Address &&
+                isUsableIpv6(it.address as Inet6Address)
+        }
+        if (wifiIpv6 != null) return wifiIpv6
 
-        android.util.Log.d(
-            "DropLinkNetwork",
-            "INTERNET SHARE: No usable Internet address"
-        )
+        // 3. Cellular IPv6 (globally routable on 4G/5G mobile data)
+        val cellIpv6 = candidates.firstOrNull {
+            it.type == "Cellular" &&
+                it.address is Inet6Address &&
+                isUsableIpv6(it.address as Inet6Address)
+        }
+        if (cellIpv6 != null) return cellIpv6
 
-        return null
+        // 4. Cellular IPv4 (mobile hotspot / carrier)
+        val cellIpv4 = candidates.firstOrNull {
+            it.type == "Cellular" &&
+                it.address is Inet4Address &&
+                !it.address.isLoopbackAddress &&
+                !it.address.isLinkLocalAddress
+        }
+        if (cellIpv4 != null) return cellIpv4
+
+        // 5. Ethernet IPv4
+        val ethIpv4 = candidates.firstOrNull {
+            isEthernetInterface(it) &&
+                it.address is Inet4Address &&
+                !it.address.isLoopbackAddress &&
+                !it.address.isLinkLocalAddress
+        }
+        if (ethIpv4 != null) return ethIpv4
+
+        // 6. Any other IPv4 candidate
+        val anyIpv4 = candidates.firstOrNull {
+            it.address is Inet4Address &&
+                !it.address.isLoopbackAddress &&
+                !it.address.isLinkLocalAddress
+        }
+        if (anyIpv4 != null) return anyIpv4
+
+        // 7. Any other IPv6 candidate
+        val anyIpv6 = candidates.firstOrNull {
+            it.address is Inet6Address &&
+                isUsableIpv6(it.address as Inet6Address)
+        }
+        if (anyIpv6 != null) return anyIpv6
+
+        return candidates.firstOrNull()
     }
 
+    fun getPreferredAddress(): NetworkAddress? {
+        return getInternetNetworkAddress() ?: getLocalNetworkAddress() ?: getIpCandidates().firstOrNull()
+    }
 
-    /*
-     * =========================================================
-     * COMPATIBILITY METHOD
-     * =========================================================
-     *
-     * If old Local Share code still calls:
-     *
-     *     NetworkUtils.getLocalIpAddress()
-     *
-     * it will now get the LOCAL address.
-     *
-     * It will NOT return rmnet/cellular.
-     */
     fun getLocalIpAddress(): String? {
-
-        return getLocalNetworkAddress()
-            ?.address
-            ?.hostAddress
+        val addr = getLocalNetworkAddress() ?: getPreferredAddress()
+        return addr?.let { cleanHostAddress(it.address) }
     }
 
+    fun cleanHostAddress(address: InetAddress): String {
+        val raw = address.hostAddress ?: ""
+        return if (raw.contains("%")) {
+            raw.substringBefore("%")
+        } else {
+            raw
+        }
+    }
 
-    /*
-     * =========================================================
-     * LOCAL INTERFACE CHECK
-     * =========================================================
-     */
-    private fun isLocalInterface(
-        network: NetworkAddress
-    ): Boolean {
-
-        val name =
-            network.interfaceName
-                .lowercase()
-
+    private fun isLocalInterface(network: NetworkAddress): Boolean {
+        val name = network.interfaceName.lowercase()
         return name.contains("wlan") ||
-                name.contains("wifi") ||
-                name.contains("ap")
+            name.contains("wifi") ||
+            name.contains("ap") ||
+            name.contains("swlan") ||
+            name.contains("wl") ||
+            name.contains("hotspot") ||
+            name.contains("softap")
     }
 
-
-    /*
-     * =========================================================
-     * ETHERNET CHECK
-     * =========================================================
-     */
-    private fun isEthernetInterface(
-        network: NetworkAddress
-    ): Boolean {
-
-        return network.interfaceName
-            .lowercase()
-            .contains("eth")
+    private fun isEthernetInterface(network: NetworkAddress): Boolean {
+        val name = network.interfaceName.lowercase()
+        return name.contains("eth") || name.contains("usb") || name.contains("rndis")
     }
 
-
-    /*
-     * =========================================================
-     * GET ALL IP CANDIDATES
-     * =========================================================
-     */
-    private fun getIpCandidates():
-        List<NetworkAddress> {
-
-        val result =
-            mutableListOf<NetworkAddress>()
-
+    private fun getIpCandidates(): List<NetworkAddress> {
+        val result = mutableListOf<NetworkAddress>()
         try {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return result
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                if (!iface.isUp || iface.isLoopback) continue
 
-            val interfaces =
-                NetworkInterface
-                    .getNetworkInterfaces()
+                val type = getInterfaceType(iface.name)
+                val addresses = iface.inetAddresses
 
-            while (
-                interfaces.hasMoreElements()
-            ) {
-
-                val networkInterface =
-                    interfaces.nextElement()
-
-
-                /*
-                 * Ignore disabled interfaces.
-                 */
-
-                if (
-                    !networkInterface.isUp ||
-                    networkInterface.isLoopback
-                ) {
-                    continue
-                }
-
-
-                val type =
-                    getInterfaceType(
-                        networkInterface.name
-                    )
-
-
-                android.util.Log.d(
-                    "DropLinkNetwork",
-                    "INTERFACE: " +
-                        networkInterface.name +
-                        " TYPE: " +
-                        type
-                )
-
-
-                val addresses =
-                    networkInterface
-                        .inetAddresses
-
-
-                while (
-                    addresses.hasMoreElements()
-                ) {
-
-                    val address =
-                        addresses.nextElement()
-
-
-                    android.util.Log.d(
-                        "DropLinkNetwork",
-                        "ADDRESS: " +
-                            address.hostAddress
-                    )
-
-
-                    /*
-                     * Ignore loopback and link-local.
-                     */
-
-                    if (
-                        address.isLoopbackAddress ||
-                        address.isLinkLocalAddress
-                    ) {
+                while (addresses.hasMoreElements()) {
+                    val address = addresses.nextElement()
+                    if (address.isLoopbackAddress || address.isLinkLocalAddress || address.isMulticastAddress) {
                         continue
                     }
 
-
-                    /*
-                     * Ignore IPv6 multicast.
-                     */
-
-                    if (
-                        address is Inet6Address &&
-                        address.isMulticastAddress
-                    ) {
+                    if (address is Inet6Address && !isUsableIpv6(address)) {
                         continue
                     }
-
 
                     result.add(
                         NetworkAddress(
-                            address =
-                                address,
-
-                            type =
-                                type,
-
-                            interfaceName =
-                                networkInterface.name
+                            address = address,
+                            type = type,
+                            interfaceName = iface.name
                         )
                     )
                 }
             }
-
         } catch (e: Exception) {
-
-            android.util.Log.e(
-                "DropLinkNetwork",
-                "NETWORK ERROR",
-                e
-            )
+            android.util.Log.e("DropLinkNetwork", "Error scanning network interfaces", e)
         }
-
         return result
     }
 
-
-    /*
-     * =========================================================
-     * IPV6 VALIDATION
-     * =========================================================
-     */
-    private fun isUsableIpv6(
-        address: Inet6Address
-    ): Boolean {
-
+    private fun isUsableIpv6(address: Inet6Address): Boolean {
         return !address.isLoopbackAddress &&
-                !address.isLinkLocalAddress &&
-                !address.isSiteLocalAddress &&
-                !address.isMulticastAddress
+            !address.isLinkLocalAddress &&
+            !address.isSiteLocalAddress &&
+            !address.isMulticastAddress
     }
 
-
-    /*
-     * =========================================================
-     * INTERFACE TYPE
-     * =========================================================
-     */
-    private fun getInterfaceType(
-        name: String
-    ): String {
-
-        val lower =
-            name.lowercase()
-
+    private fun getInterfaceType(name: String): String {
+        val lower = name.lowercase()
         return when {
-
-            lower.contains("rmnet") ->
-                "Cellular"
-
-            lower.contains("wlan") ->
-                "WiFi/Hotspot"
-
-            lower.contains("wifi") ->
-                "WiFi"
-
-            lower.contains("ap") ->
-                "Hotspot"
-
-            lower.contains("eth") ->
-                "Ethernet"
-
-            else ->
-                "Local"
+            lower.contains("rmnet") || lower.contains("ccmni") || lower.contains("pdp") || lower.contains("data") || lower.contains("radio") || lower.contains("cellular") -> "Cellular"
+            lower.contains("wlan") || lower.contains("wifi") || lower.contains("swlan") || lower.contains("wl") -> "WiFi"
+            lower.contains("ap") || lower.contains("hotspot") || lower.contains("softap") -> "Hotspot"
+            lower.contains("eth") || lower.contains("usb") || lower.contains("rndis") -> "Ethernet"
+            else -> "LAN"
         }
     }
-    fun getPreferredAddress(): NetworkAddress? {
-    return getInternetNetworkAddress()
-}
 }
 
-
-/*
- * =========================================================
- * NETWORK ADDRESS
- * =========================================================
- */
 data class NetworkAddress(
-    val address: java.net.InetAddress,
+    val address: InetAddress,
     val type: String,
     val interfaceName: String
 )
