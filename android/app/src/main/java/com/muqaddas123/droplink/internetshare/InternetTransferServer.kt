@@ -96,7 +96,7 @@ class InternetTransferServer(
      * public IPv6 address should be displayed to the user.
      */
     @Synchronized
-    fun start(): Int {
+    fun start(address: InetAddress): Int {
 
         if (running && serverSocket != null) {
             return port
@@ -116,7 +116,7 @@ class InternetTransferServer(
             serverSocket = ServerSocket().apply {
                 reuseAddress = true
                 receiveBufferSize = SOCKET_BUFFER_SIZE
-                bind(InetSocketAddress(0), SERVER_BACKLOG)
+                bind(InetSocketAddress(address, 0), SERVER_BACKLOG)
             }
 
             port =
@@ -125,12 +125,7 @@ class InternetTransferServer(
             running = true
             paused = false
 
-            val internetAddress =
-                NetworkUtils
-                    .getInternetNetworkAddress()
-
-            bindAddress =
-                internetAddress?.address
+            bindAddress = address
 
             android.util.Log.d(
                 TAG,

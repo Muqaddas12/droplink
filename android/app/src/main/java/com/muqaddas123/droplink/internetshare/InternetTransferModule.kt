@@ -220,14 +220,15 @@ class InternetTransferModule(
              */
 
             val network =
-                NetworkUtils.getPreferredAddress()
+                NetworkUtils.getInternetNetworkAddress()
 
 
             if (network == null) {
 
                 promise.reject(
-                    "NO_NETWORK",
-                    "No usable IPv4 or IPv6 address was found."
+                    "INTERNET_SHARE_UNAVAILABLE",
+                    "Internet Share needs a globally routable IPv6 connection. " +
+                        "This network only provides private addresses, which cannot receive Internet connections."
                 )
 
                 return
@@ -290,7 +291,7 @@ class InternetTransferModule(
              */
 
             val port =
-                transferServer.start()
+                transferServer.start(network.address)
 
 
             /*

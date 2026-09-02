@@ -92,7 +92,7 @@ object NetworkUtils {
                 !it.address.isLoopbackAddress &&
                 !it.address.isLinkLocalAddress
         }
-        if (wifiIpv4 != null) return wifiIpv4
+
 
         // 2. Usable IPv6 on Wi-Fi (often globally routable)
         val wifiIpv6 = candidates.firstOrNull {
@@ -117,7 +117,7 @@ object NetworkUtils {
                 !it.address.isLoopbackAddress &&
                 !it.address.isLinkLocalAddress
         }
-        if (cellIpv4 != null) return cellIpv4
+
 
         // 5. Ethernet IPv4
         val ethIpv4 = candidates.firstOrNull {
@@ -126,7 +126,7 @@ object NetworkUtils {
                 !it.address.isLoopbackAddress &&
                 !it.address.isLinkLocalAddress
         }
-        if (ethIpv4 != null) return ethIpv4
+
 
         // 6. Any other IPv4 candidate
         val anyIpv4 = candidates.firstOrNull {
@@ -134,7 +134,7 @@ object NetworkUtils {
                 !it.address.isLoopbackAddress &&
                 !it.address.isLinkLocalAddress
         }
-        if (anyIpv4 != null) return anyIpv4
+
 
         // 7. Any other IPv6 candidate
         val anyIpv6 = candidates.firstOrNull {
@@ -143,7 +143,7 @@ object NetworkUtils {
         }
         if (anyIpv6 != null) return anyIpv6
 
-        return candidates.firstOrNull()
+        return null
     }
 
     fun getPreferredAddress(): NetworkAddress? {
@@ -220,7 +220,9 @@ object NetworkUtils {
         return !address.isLoopbackAddress &&
             !address.isLinkLocalAddress &&
             !address.isSiteLocalAddress &&
-            !address.isMulticastAddress
+            !address.isMulticastAddress &&
+            // fc00::/7 is unique-local (private) IPv6, not Internet-routable.
+            ((address.address.first().toInt() and 0xff) and 0xfe) != 0xfc
     }
 
     private fun getInterfaceType(name: String): String {

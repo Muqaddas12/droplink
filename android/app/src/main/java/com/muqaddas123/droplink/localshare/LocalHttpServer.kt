@@ -277,9 +277,13 @@ fun scanReceivedFiles(): List<ReceivedFile> {
    // Load previously received files
     // from Download/DropLink
     scanReceivedFiles()
-        // Android apps cannot bind privileged ports below 1024; use an available non-privileged port.
-        serverSocket =
+        // Prefer a stable port, but remain available when another app owns it.
+        serverSocket = try {
+            ServerSocket(8080)
+        } catch (_: Exception) {
+            // Covers a busy port and platform/network policy restrictions.
             ServerSocket(0)
+        }
 
         port =
             serverSocket!!.localPort
