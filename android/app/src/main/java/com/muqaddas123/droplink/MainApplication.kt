@@ -2,6 +2,7 @@ package com.muqaddas123.droplink
 import com.muqaddas123.droplink.openfile.OpenFilePackage
 import com.muqaddas123.droplink.localshare.DropLinkPackage
 import com.muqaddas123.droplink.internetshare.InternetTransferPackage
+import com.muqaddas123.droplink.wifi.WifiPackage
 import android.app.Application
 import android.content.res.Configuration
 
@@ -28,6 +29,7 @@ class MainApplication : Application(), ReactApplication {
       add(DropLinkPackage())
       add(InternetTransferPackage())
       add(OpenFilePackage())
+      add(WifiPackage())
     }
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"
 

@@ -12,8 +12,10 @@ import {
     Platform,
     Share,
     View,
+   
 } from 'react-native';
 
+import {checkNetworkStatus,openHotspot} from '@/lib/nativeWifi';
 import LocalShareDashboard from '@/components/localshare/LocalShareDashboard';
 import { useSidebar } from '@/context/SidebarContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -387,12 +389,37 @@ const handleReceivedFilePress = async (
 
   const handleSelectFiles = async () => {
 
-    if (loading) {
-      return;
-    }
-
     try {
+const status = await checkNetworkStatus();
 
+console.log(status);
+
+if (loading) {
+  return;
+}
+
+if (!status.isWifi && !status.isHotspot) {
+  Alert.alert(
+    'DropLink',
+    'Please connect to a router or open a hotspot.',
+    [
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+      {
+        text: 'Open Hotspot',
+        onPress: () => {
+  openHotspot().catch(error => {
+    console.error('Failed to open hotspot settings:', error);
+  });
+},
+      },
+    ]
+  );
+
+  return;
+}
       setLoading(true);
 
       if (
@@ -410,7 +437,7 @@ const handleReceivedFilePress = async (
 
       const network =
         await getNetworkInfo();
-
+console.log(network)
       if (!network.connected) {
 
         Alert.alert(
