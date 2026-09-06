@@ -1,19 +1,19 @@
-import React, { useRef, useEffect } from 'react';
+import { useTheme } from '@/context/ThemeContext';
+import type { ReceivedFile, ServerInfo, SharedFile } from '@/lib/nativeDropLink';
+import React, { useEffect, useRef } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  RefreshControl,
   ActivityIndicator,
   Animated,
   Clipboard,
+  RefreshControl,
+  ScrollView,
   Share,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import { useTheme } from '@/context/ThemeContext';
-import type { ReceivedFile, ServerInfo, SharedFile } from '@/lib/nativeDropLink';
 
 type LocalShareDashboardProps = {
   isServerStarted: boolean;
@@ -121,7 +121,12 @@ export default function LocalShareDashboard({
 
   if (!isServerStarted) {
     return (
-      <View style={[styles.idleContainer, { backgroundColor: colors.bg }]}>
+      <ScrollView
+        style={[styles.scrollContainer, { backgroundColor: colors.bg }]}
+        contentContainerStyle={styles.idleScrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+      >
+        {/* Hero Animation */}
         <View style={styles.heroAnimation}>
           {[ring1, ring2, ring3].map((ring, index) => (
             <Animated.View
@@ -168,7 +173,50 @@ export default function LocalShareDashboard({
           <View style={[styles.trustChip, { backgroundColor: colors.surface2 }]}><Text style={[styles.trustChipText, { color: colors.subtext }]}>⚡ LAN Speed</Text></View>
           <View style={[styles.trustChip, { backgroundColor: colors.surface2 }]}><Text style={[styles.trustChipText, { color: colors.subtext }]}>🌐 Browser Access</Text></View>
         </View>
-      </View>
+
+        {/* Recently Received Files */}
+        <View style={styles.idleReceivedSection}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionHeadingRow}>
+              <Text style={[styles.sectionHeading, { color: colors.text }]}>📥 Recently Received</Text>
+              {receivedFiles.length > 0 && (
+                <View style={[styles.countBadge, { backgroundColor: colors.primaryFade }]}>
+                  <Text style={[styles.countBadgeText, { color: colors.primary }]}>{receivedFiles.length}</Text>
+                </View>
+              )}
+            </View>
+            {receivedFiles.length > 0 && (
+              <Text style={[styles.totalText, { color: colors.subtext }]}>{formatSize(totalReceivedSize)}</Text>
+            )}
+          </View>
+
+          {receivedFiles.length === 0 ? (
+            <View style={[styles.emptyState, { backgroundColor: colors.surface1, borderColor: colors.border }]}>
+              <Text style={[styles.emptyStateIcon, { color: colors.muted }]}>📭</Text>
+              <Text style={[styles.emptyStateText, { color: colors.subtext }]}>No files received yet</Text>
+              <Text style={[styles.emptyStateHint, { color: colors.muted }]}>Start the server and receive files from any browser</Text>
+            </View>
+          ) : (
+            receivedFiles.slice(0, 10).map((file, i) => (
+              <TouchableOpacity
+                key={i}
+                style={[styles.fileCard, { backgroundColor: colors.surface1, borderColor: colors.border }]}
+                onPress={() => onOpenReceivedFile(file)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.fileIcon}>{getCategoryIcon(file.mimeType, file.category)}</Text>
+                <View style={styles.fileInfo}>
+                  <Text style={[styles.fileName, { color: colors.text }]} numberOfLines={1}>{file.name}</Text>
+                  <Text style={[styles.fileMeta, { color: colors.subtext }]}>{formatSize(file.size)}</Text>
+                </View>
+                <View style={[styles.openButton, { backgroundColor: colors.primaryFade }]}>
+                  <Text style={[styles.openButtonText, { color: colors.primary }]}>Open</Text>
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+      </ScrollView>
     );
   }
 
@@ -325,6 +373,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+  },
+  idleScrollContent: {
+    alignItems: 'center',
+    padding: 24,
+    paddingBottom: 48,
+  },
+  idleReceivedSection: {
+    width: '100%',
+    marginTop: 32,
+  },
+  sectionHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   heroAnimation: {
     width: 200,
@@ -640,5 +702,10 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 14,
+  },
+  emptyStateHint: {
+    fontSize: 12,
+    marginTop: 6,
+    textAlign: 'center',
   },
 });

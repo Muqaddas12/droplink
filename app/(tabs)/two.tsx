@@ -181,11 +181,25 @@ export default function TabTwoScreen() {
             
             {serverInfo.url && (
               <View style={[styles.qrCard, { backgroundColor: colors.surface1, borderColor: colors.accent }]}>
-                <View style={[styles.qrWrapper, { backgroundColor: colors.surface1 }]}>
-                  <QRCode value={serverInfo.url} size={150} color={colors.text} backgroundColor={colors.surface1} />
+                <Text style={[styles.qrScanLabel, { color: colors.subtext }]}>SCAN TO DOWNLOAD</Text>
+
+                <View style={[styles.qrWrapper, { backgroundColor: '#FFFFFF' }]}>
+                  <QRCode
+                    value={serverInfo.url}
+                    size={200}
+                    color="#000000"
+                    backgroundColor="#FFFFFF"
+                  />
                 </View>
-                <View style={[styles.urlRow, { backgroundColor: colors.surface2 }]}>
-                  <Text style={[styles.urlText, { color: colors.text }]} numberOfLines={1}>{serverInfo.url}</Text>
+
+                <Text style={[styles.qrHint, { color: colors.subtext }]}>
+                  Point any phone camera at this code
+                </Text>
+
+                <View style={[styles.urlRow, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
+                  <Text style={[styles.urlText, { color: colors.text }]} numberOfLines={1} ellipsizeMode="middle">
+                    {serverInfo.url}
+                  </Text>
                   <Pressable style={[styles.btnCopy, { backgroundColor: colors.surface3 }]} onPress={handleCopyUrl}>
                     <Text style={styles.btnCopyText}>{copied ? '✓' : '📋'}</Text>
                   </Pressable>
@@ -317,13 +331,45 @@ const styles = StyleSheet.create({
   statusBannerText: { fontWeight: 'bold', fontSize: 14 },
   
   qrCard: {
-    borderRadius: 20, padding: 24,
-    alignItems: 'center', borderWidth: 2, marginBottom: 24,
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 2,
+    marginBottom: 24,
   },
-  qrWrapper: { padding: 16, borderRadius: 12, marginBottom: 20 },
-  urlRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 8, paddingLeft: 12, paddingRight: 4, paddingVertical: 4 },
-  urlText: { flex: 1, fontFamily: 'monospace', fontSize: 12, marginRight: 8 },
-  btnCopy: { padding: 8, borderRadius: 6, marginLeft: 8 },
+  qrScanLabel: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    letterSpacing: 1.2,
+    marginBottom: 16,
+  },
+  qrWrapper: {
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  qrHint: {
+    fontSize: 13,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  urlRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingLeft: 14,
+    paddingRight: 6,
+    paddingVertical: 6,
+    width: '100%',
+    borderWidth: 1,
+  },
+  urlText: { flex: 1, fontFamily: 'monospace', fontSize: 13, marginRight: 8 },
+  btnCopy: { padding: 8, borderRadius: 8, marginLeft: 6 },
   btnCopyText: { fontSize: 16 },
   
   networkChips: { flexDirection: 'row', gap: 10, marginBottom: 24, flexWrap: 'wrap' },
