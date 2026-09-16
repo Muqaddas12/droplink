@@ -1,17 +1,34 @@
 import { useTheme } from '@/context/ThemeContext';
-import type { ReceivedFile, ServerInfo, SharedFile } from '@/lib/nativeDropLink';
-import React, { useEffect, useRef } from 'react';
 import {
-  ActivityIndicator,
-  Animated,
-  Clipboard,
-  RefreshControl,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    addPeerFoundListener,
+    addTextReceivedListener,
+    addTransferProgressListener,
+    DiscoveredPeer,
+    getDiscoveredPeers,
+    getSharedTexts,
+    ReceivedFile,
+    sendSharedText,
+    ServerInfo,
+    SharedFile,
+    SharedTextItem,
+    startPeerDiscovery,
+    stopPeerDiscovery,
+    TransferProgressEvent,
+} from '@/lib/nativeDropLink';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Clipboard,
+    RefreshControl,
+    ScrollView,
+    Share,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
@@ -70,6 +87,83 @@ export default function LocalShareDashboard({
   const ring1 = useRef(new Animated.Value(0)).current;
   const ring2 = useRef(new Animated.Value(0)).current;
   const ring3 = useRef(new Animated.Value(0)).current;
+
+  const [activeTransfer, setActiveTransfer] = useState<TransferProgressEvent | null>(null);
+  const [discoveredPeers, setDiscoveredPeers] = useState<DiscoveredPeer[]>([]);
+  const [sharedTexts, setSharedTexts] = useState<SharedTextItem[]>([]);
+  const [textInput, setTextInput] = useState('');
+  const [sendingText, setSendingText] = useState(false);
+
+  useEffect(() => {
+    if (!isServerStarted) {
+      setActiveTransfer(null);
+      setDiscoveredPeers([]);
+      stopPeerDiscovery().catch(() => {});
+      return;
+    }
+
+    startPeerDiscovery()
+      .then(() => getDiscoveredPeers().then(setDiscoveredPeers))
+      .catch(() => {});
+
+    getSharedTexts().then(setSharedTexts).catch(() => {});
+
+    const subPeer = addPeerFoundListener((peer) => {
+      setDiscoveredPeers((prev) => {
+        const filtered = prev.filter((p) => p.ip !== peer.ip);
+        return [peer, ...filtered];
+      });
+    });
+
+    const subText = addTextReceivedListener((data) => {
+      setSharedTexts((prev) => [
+        {
+          id: String(Date.now()),
+          text: data.text,
+          timestamp: data.timestamp,
+          sender: data.sender || 'browser',
+        },
+        ...prev,
+      ]);
+      Alert.alert('📝 Text Received', data.text);
+    });
+
+    let timeoutId: any = null;
+    const subProgress = addTransferProgressListener((event) => {
+      setActiveTransfer(event);
+      if (event.speed === 0 || event.bytes >= event.total) {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          setActiveTransfer(null);
+        }, 3000);
+      }
+    });
+
+    return () => {
+      subPeer.remove();
+      subText.remove();
+      subProgress.remove();
+      clearTimeout(timeoutId);
+      stopPeerDiscovery().catch(() => {});
+    };
+  }, [isServerStarted]);
+
+  const handleSendText = async () => {
+    const trimmed = textInput.trim();
+    if (!trimmed) return;
+    setSendingText(true);
+    try {
+      await sendSharedText(trimmed);
+      setTextInput('');
+      const updated = await getSharedTexts();
+      setSharedTexts(updated);
+      Alert.alert('✓ Text Sent', 'Your message was shared with connected devices.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to send text');
+    } finally {
+      setSendingText(false);
+    }
+  };
 
   useEffect(() => {
     if (!loading) {
@@ -282,6 +376,52 @@ export default function LocalShareDashboard({
         )}
       </View>
 
+      {/* 1b. Real-Time Active Transfer Progress Banner */}
+      {activeTransfer && (
+        <View style={[styles.transferCard, { backgroundColor: colors.surface1, borderColor: colors.primary }]}>
+          <View style={styles.transferHeader}>
+            <View style={styles.transferTitleRow}>
+              <Text style={styles.transferIcon}>
+                {activeTransfer.isUpload ? '📥' : '📤'}
+              </Text>
+              <Text style={[styles.transferTitle, { color: colors.text }]} numberOfLines={1}>
+                {activeTransfer.isUpload ? 'Receiving Upload...' : 'Sending to Browser...'}
+              </Text>
+            </View>
+            <View style={[styles.speedBadge, { backgroundColor: colors.primaryFade }]}>
+              <Text style={[styles.speedBadgeText, { color: colors.primary }]}>
+                {formatSize(activeTransfer.speed)}/s
+              </Text>
+            </View>
+          </View>
+
+          <Text style={[styles.transferFileName, { color: colors.subtext }]} numberOfLines={1}>
+            {activeTransfer.fileName}
+          </Text>
+
+          <View style={[styles.progressTrack, { backgroundColor: colors.surface3 }]}>
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  backgroundColor: colors.primary,
+                  width: `${activeTransfer.total > 0 ? Math.min(100, Math.round((activeTransfer.bytes / activeTransfer.total) * 100)) : 0}%`,
+                },
+              ]}
+            />
+          </View>
+
+          <View style={styles.transferFooter}>
+            <Text style={[styles.transferMeta, { color: colors.subtext }]}>
+              {formatSize(activeTransfer.bytes)} / {formatSize(activeTransfer.total)}
+            </Text>
+            <Text style={[styles.transferMetaPercent, { color: colors.primary }]}>
+              {activeTransfer.total > 0 ? Math.round((activeTransfer.bytes / activeTransfer.total) * 100) : 0}%
+            </Text>
+          </View>
+        </View>
+      )}
+
       {/* 2. Stats row */}
       <View style={[styles.statsRow, { backgroundColor: colors.surface1, borderColor: colors.border }]}>
         <View style={styles.statColumn}>
@@ -295,6 +435,96 @@ export default function LocalShareDashboard({
         <View style={styles.statColumn}>
           <Text style={[styles.statValue, { color: colors.text }]}>{formatSize(totalSharedSize + totalReceivedSize)}</Text>
           <Text style={[styles.statLabel, { color: colors.subtext }]}>💾 Total</Text>
+        </View>
+      </View>
+
+      {/* 2b. Nearby DropLink Devices on LAN */}
+      {discoveredPeers.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionHeading, { color: colors.text }]}>Nearby DropLink Devices</Text>
+            <View style={[styles.countBadge, { backgroundColor: colors.primaryFade }]}>
+              <Text style={[styles.countBadgeText, { color: colors.primary }]}>{discoveredPeers.length} online</Text>
+            </View>
+          </View>
+          {discoveredPeers.map((peer, idx) => (
+            <View key={`${peer.ip}_${idx}`} style={[styles.peerCard, { backgroundColor: colors.surface1, borderColor: colors.border }]}>
+              <Text style={styles.peerIcon}>📡</Text>
+              <View style={styles.peerInfo}>
+                <Text style={[styles.peerName, { color: colors.text }]} numberOfLines={1}>{peer.name}</Text>
+                <Text style={[styles.peerUrl, { color: colors.subtext }]}>http://{peer.ip}:{peer.port}</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.peerCopyBtn, { backgroundColor: colors.primaryFade }]}
+                onPress={() => {
+                  Clipboard.setString(`http://${peer.ip}:${peer.port}`);
+                  Alert.alert('Link Copied', `Copied http://${peer.ip}:${peer.port} to clipboard!`);
+                }}
+              >
+                <Text style={[styles.peerCopyBtnText, { color: colors.primary }]}>Copy Link</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* 2c. Quick Text & Clipboard Sync */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionHeading, { color: colors.text }]}>Quick Text & Clipboard Sync</Text>
+          {sharedTexts.length > 0 && (
+            <View style={[styles.countBadge, { backgroundColor: colors.primaryFade }]}>
+              <Text style={[styles.countBadgeText, { color: colors.primary }]}>{sharedTexts.length}</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={[styles.textSyncCard, { backgroundColor: colors.surface1, borderColor: colors.border }]}>
+          <View style={styles.textInputRow}>
+            <TextInput
+              style={[styles.textInputField, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface2 }]}
+              placeholder="Type message, note or paste link to share..."
+              placeholderTextColor={colors.subtext}
+              value={textInput}
+              onChangeText={setTextInput}
+              multiline
+              numberOfLines={2}
+            />
+            <TouchableOpacity
+              style={[styles.textSendButton, { backgroundColor: colors.primary, opacity: sendingText ? 0.6 : 1 }]}
+              onPress={handleSendText}
+              disabled={sendingText}
+            >
+              <Text style={styles.textSendButtonText}>{sendingText ? '...' : 'Send'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {sharedTexts.length > 0 && (
+            <View style={styles.sharedTextsContainer}>
+              <Text style={[styles.sharedTextsLabel, { color: colors.subtext }]}>Recent Text / Links:</Text>
+              {sharedTexts.slice(0, 5).map((item, idx) => (
+                <TouchableOpacity
+                  key={item.id || idx}
+                  style={[styles.sharedTextBubble, { backgroundColor: colors.surface2, borderColor: colors.border }]}
+                  onPress={() => {
+                    Clipboard.setString(item.text);
+                    Alert.alert('Copied to Clipboard', item.text);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.sharedTextMetaRow}>
+                    <Text style={[styles.sharedTextSenderTag, { color: colors.primary }]}>
+                      {item.sender === 'phone' ? '📱 Mobile' : '💻 Browser'}
+                    </Text>
+                    <Text style={[styles.sharedTextCopyHint, { color: colors.subtext }]}>Tap to copy 📋</Text>
+                  </View>
+                  <Text style={[styles.sharedTextContent, { color: colors.text }]} numberOfLines={3}>
+                    {item.text}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </View>
       </View>
 
@@ -707,5 +937,173 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 6,
     textAlign: 'center',
+  },
+
+  // Real-Time Transfer Card
+  transferCard: {
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1.5,
+  },
+  transferHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  transferTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  transferIcon: {
+    fontSize: 18,
+    marginRight: 6,
+  },
+  transferTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    flex: 1,
+  },
+  speedBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  speedBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  transferFileName: {
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  transferFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  transferMeta: {
+    fontSize: 12,
+  },
+  transferMetaPercent: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  // Peer Discovery
+  peerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  peerIcon: {
+    fontSize: 22,
+    marginRight: 12,
+  },
+  peerInfo: {
+    flex: 1,
+  },
+  peerName: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  peerUrl: {
+    fontSize: 12,
+  },
+  peerCopyBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  peerCopyBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  // Quick Text Sync
+  textSyncCard: {
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+  },
+  textInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  textInputField: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    minHeight: 40,
+    maxHeight: 80,
+  },
+  textSendButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  textSendButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  sharedTextsContainer: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(150,150,150,0.2)',
+  },
+  sharedTextsLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  sharedTextBubble: {
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  sharedTextMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  sharedTextSenderTag: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  sharedTextCopyHint: {
+    fontSize: 11,
+  },
+  sharedTextContent: {
+    fontSize: 14,
+    lineHeight: 18,
   },
 });

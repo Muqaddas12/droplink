@@ -40,6 +40,43 @@ const getMimeMeta = (mimeType?: string | null) => {
   return { emoji: '📄', color: '#3B82F6' };
 };
 
+const checkReachability = (ip: string, networkType?: string) => {
+  if (!ip) return { type: 'unknown', title: 'Network Unknown', message: 'Unable to detect IP address.', tip: '' };
+  const parts = ip.split('.').map(Number);
+  const isCgnat = parts.length === 4 && parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
+  const isPrivate = parts.length === 4 && (
+    parts[0] === 10 ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168)
+  );
+  const isCellular = (networkType || '').toUpperCase().includes('CELL') || (networkType || '').toUpperCase().includes('MOBILE');
+
+  if (isCgnat || isCellular) {
+    return {
+      type: 'cgnat',
+      title: 'Carrier NAT (CGNAT) Detected',
+      message: 'Mobile data carriers block direct inbound connections from other networks. Receiver must connect to the same Wi-Fi or your Mobile Hotspot for direct transfer.',
+      tip: '💡 Tip: Turn on Mobile Hotspot on this device, connect the other device to it, then reload!',
+    };
+  }
+
+  if (isPrivate) {
+    return {
+      type: 'lan',
+      title: 'Local Wi-Fi Subnet Active',
+      message: 'This link is reachable by any phone, PC, or tablet connected to your local Wi-Fi or Hotspot.',
+      tip: '💡 Tip: Both devices must be on the same Wi-Fi or Hotspot.',
+    };
+  }
+
+  return {
+    type: 'public',
+    title: 'Public IP Reachable',
+    message: 'Your device is assigned a public IP. External internet devices can connect directly.',
+    tip: 'Ensure your network router allows incoming traffic on port ' + (parts.join('.') ? 'specified' : ''),
+  };
+};
+
 export default function TabTwoScreen() {
   const { colors, isDark } = useTheme();
   const [selectedFiles, setSelectedFiles] = useState<PickedFile[]>([]);
@@ -221,6 +258,43 @@ export default function TabTwoScreen() {
                 <Text style={[styles.chipText, { color: colors.subtext }]}>Status: {paused ? 'Paused' : 'Active'}</Text>
               </View>
             </View>
+
+            {/* Reachability Diagnosis & Guidance (Part 1, Point 5) */}
+            {(() => {
+              const diag = checkReachability(serverInfo.ip, serverInfo.networkType);
+              const isWarning = diag.type === 'cgnat';
+              return (
+                <View
+                  style={[
+                    styles.reachabilityCard,
+                    {
+                      backgroundColor: isWarning ? colors.surface2 : colors.surface1,
+                      borderColor: isWarning ? (colors.accent || '#F59E0B') : colors.border,
+                    },
+                  ]}
+                >
+                  <View style={styles.reachabilityHeader}>
+                    <Text style={styles.reachabilityIcon}>{isWarning ? '🛡️' : '📶'}</Text>
+                    <Text
+                      style={[
+                        styles.reachabilityTitle,
+                        { color: isWarning ? (colors.accent || '#F59E0B') : colors.text },
+                      ]}
+                    >
+                      {diag.title}
+                    </Text>
+                  </View>
+                  <Text style={[styles.reachabilityDesc, { color: colors.subtext }]}>
+                    {diag.message}
+                  </Text>
+                  {diag.tip ? (
+                    <Text style={[styles.reachabilityTip, { color: colors.primary }]}>
+                      {diag.tip}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })()}
             
             <View style={[styles.fileList, { backgroundColor: colors.surface1, borderColor: colors.border }]}>
               {selectedFiles.map((file, idx) => (
@@ -394,4 +468,35 @@ const styles = StyleSheet.create({
   btnPauseText: { fontWeight: 'bold' },
   btnStop: { flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1 },
   btnStopText: { fontWeight: 'bold' },
+
+  // Reachability Card
+  reachabilityCard: {
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  reachabilityHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  reachabilityIcon: {
+    fontSize: 18,
+  },
+  reachabilityTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  reachabilityDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 6,
+  },
+  reachabilityTip: {
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
 });

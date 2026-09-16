@@ -1,6 +1,8 @@
 import {
-  NativeModules,
-  Platform,
+    DeviceEventEmitter,
+    EmitterSubscription,
+    NativeModules,
+    Platform
 } from 'react-native';
 
 // =========================================================
@@ -32,6 +34,32 @@ export type ReceivedFile = {
    * Images | Videos | Audio | Documents | Archives | Others
    */
   category: string;
+};
+
+// =========================================================
+// REAL-TIME PROGRESS & DISCOVERY TYPES
+// =========================================================
+
+export type TransferProgressEvent = {
+  bytes: number;
+  total: number;
+  speed: number;
+  fileName: string;
+  isUpload: boolean;
+};
+
+export type DiscoveredPeer = {
+  name: string;
+  ip: string;
+  port: number;
+  lastSeen: number;
+};
+
+export type SharedTextItem = {
+  id: string;
+  text: string;
+  timestamp: number;
+  sender: string;
 };
 
 // =========================================================
@@ -83,6 +111,11 @@ type DropLinkNativeModule = {
   getServerStatus(): Promise<ServerStatus>;
   getLocalIp(): Promise<string>;
   getNetworkInfo(): Promise<NetworkInfo>;
+  startPeerDiscovery(): Promise<boolean>;
+  stopPeerDiscovery(): Promise<boolean>;
+  getDiscoveredPeers(): Promise<DiscoveredPeer[]>;
+  sendSharedText(text: string): Promise<boolean>;
+  getSharedTexts(): Promise<SharedTextItem[]>;
 };
 
 // =========================================================
@@ -191,4 +224,59 @@ export async function getLocalIp(): Promise<string> {
 export async function getNetworkInfo(): Promise<NetworkInfo> {
   checkAndroid();
   return DropLink!.getNetworkInfo();
+}
+
+// =========================================================
+// PEER DISCOVERY
+// =========================================================
+
+export async function startPeerDiscovery(): Promise<boolean> {
+  checkAndroid();
+  return DropLink!.startPeerDiscovery();
+}
+
+export async function stopPeerDiscovery(): Promise<boolean> {
+  checkAndroid();
+  return DropLink!.stopPeerDiscovery();
+}
+
+export async function getDiscoveredPeers(): Promise<DiscoveredPeer[]> {
+  checkAndroid();
+  return DropLink!.getDiscoveredPeers();
+}
+
+// =========================================================
+// TEXT / CLIPBOARD SHARING
+// =========================================================
+
+export async function sendSharedText(text: string): Promise<boolean> {
+  checkAndroid();
+  return DropLink!.sendSharedText(text);
+}
+
+export async function getSharedTexts(): Promise<SharedTextItem[]> {
+  checkAndroid();
+  return DropLink!.getSharedTexts();
+}
+
+// =========================================================
+// EVENT LISTENERS
+// =========================================================
+
+export function addTransferProgressListener(
+  listener: (event: TransferProgressEvent) => void,
+): EmitterSubscription {
+  return DeviceEventEmitter.addListener('DropLink_TransferProgress', listener);
+}
+
+export function addPeerFoundListener(
+  listener: (peer: DiscoveredPeer) => void,
+): EmitterSubscription {
+  return DeviceEventEmitter.addListener('DropLink_PeerFound', listener);
+}
+
+export function addTextReceivedListener(
+  listener: (data: { text: string; timestamp: number; sender: string }) => void,
+): EmitterSubscription {
+  return DeviceEventEmitter.addListener('DropLink_TextReceived', listener);
 }

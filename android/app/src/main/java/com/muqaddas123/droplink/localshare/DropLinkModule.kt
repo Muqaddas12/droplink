@@ -19,6 +19,21 @@ class DropLinkModule(
 ) : ReactContextBaseJavaModule(reactContext) {
 
     private var server: LocalHttpServer? = null
+    private var peerDiscovery: PeerDiscovery? = null
+
+    private fun emitEvent(eventName: String, params: Any?) {
+        try {
+            reactContext
+                .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(eventName, params)
+        } catch (_: Exception) {}
+    }
+
+    @ReactMethod
+    fun addListener(eventName: String) {}
+
+    @ReactMethod
+    fun removeListeners(count: Int) {}
 
     // =========================================================
     // NSD / mDNS
@@ -96,6 +111,7 @@ val sharedFiles =
             val newServer =
                 LocalHttpServer(
                     reactContext.contentResolver,
+                    reactContext,
                     android.os.Build.MODEL
                 )
 
@@ -103,40 +119,46 @@ val sharedFiles =
                 sharedFiles
             )
 
-            val port =
-                newServer.start()
+            newServer.onTransferProgress = { bytes, total, speed, fileName, isUpload ->
+                val map = Arguments.createMap().apply {
+                    putDouble("bytes", bytes.toDouble())
+                    putDouble("total", total.toDouble())
+                    putDouble("speed", speed.toDouble())
+                    putString("fileName", fileName)
+                    putBoolean("isUpload", isUpload)
+                }
+                emitEvent("DropLink_TransferProgress", map)
+            }
 
-            server =
-                newServer
+            newServer.onTextReceived = { text ->
+                val map = Arguments.createMap().apply {
+                    putString("text", text)
+                    putDouble("timestamp", System.currentTimeMillis().toDouble())
+                    putString("sender", "browser")
+                }
+                emitEvent("DropLink_TextReceived", map)
+            }
 
-            val ip =
-                NetworkUtils.getLocalIpAddress()
+            val port = newServer.start(0)
+
+            server = newServer
+
+            val ip = NetworkUtils.getLocalIpAddress()
 
             if (ip == null) {
-
                 newServer.stop()
-
                 server = null
-
-                promise.reject(
-                    "NO_NETWORK",
-                    "Unable to determine local IP address."
-                )
-
+                promise.reject("NO_NETWORK", "Unable to determine local IP address.")
                 return
             }
 
-            val url =
-                "http://droplink.local:$port"
+            val url = "http://$ip:$port"
 
             // Register the DropLink mDNS service on every active local network.
             unregisterNsd()
             registerNsd(port)
 
-            LocalShareNotification.show(
-                reactContext,
-                url
-            )
+            LocalShareService.start(reactContext, url)
 
             promise.resolve(
                 createServerInfo(
@@ -298,6 +320,7 @@ val sharedFiles =
                 } else {
                     LocalHttpServer(
                         reactContext.contentResolver,
+                        reactContext,
                         "DropLink device"
                     ).scanReceivedFiles()
                 }
@@ -364,6 +387,7 @@ val sharedFiles =
                      */
                     LocalHttpServer(
                         reactContext.contentResolver,
+                        reactContext,
                         "DropLink device"
                     ).scanReceivedFiles()
                 }
@@ -438,7 +462,7 @@ val sharedFiles =
 
             result.putInt(
                 "port",
-                currentServer.port
+                currentServer.getPort()
             )
 
             if (ip != null) {
@@ -450,7 +474,12 @@ val sharedFiles =
 
                 result.putString(
                     "url",
-                    "http://droplink.local:${currentServer.port}"
+                    "http://$ip:${currentServer.getPort()}"
+                )
+
+                result.putString(
+                    "mdnsName",
+                    "droplink.local"
                 )
 
             } else {
@@ -507,6 +536,12 @@ val sharedFiles =
 
             unregisterNsd()
 
+            peerDiscovery?.stop()
+
+            LocalShareService.stop(
+                reactContext
+            )
+
             LocalShareNotification.clear(
                 reactContext
             )
@@ -524,6 +559,99 @@ val sharedFiles =
                 e.message,
                 e
             )
+        }
+    }
+
+    // =========================================================
+    // PEER DISCOVERY
+    // =========================================================
+
+    @ReactMethod
+    fun startPeerDiscovery(promise: Promise) {
+        try {
+            if (peerDiscovery == null) {
+                peerDiscovery = PeerDiscovery(reactContext).apply {
+                    serverPort = server?.getPort() ?: 8080
+                    onPeerFound = { peer ->
+                        val map = Arguments.createMap().apply {
+                            putString("name", peer.name)
+                            putString("ip", peer.ip)
+                            putInt("port", peer.port)
+                            putDouble("lastSeen", peer.lastSeen.toDouble())
+                        }
+                        emitEvent("DropLink_PeerFound", map)
+                    }
+                }
+            }
+            peerDiscovery?.serverPort = server?.getPort() ?: 8080
+            peerDiscovery?.start()
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PEER_DISCOVERY_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun stopPeerDiscovery(promise: Promise) {
+        try {
+            peerDiscovery?.stop()
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("PEER_DISCOVERY_STOP_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getDiscoveredPeers(promise: Promise) {
+        try {
+            val peers = peerDiscovery?.getPeers() ?: emptyList()
+            val array = Arguments.createArray()
+            for (p in peers) {
+                val map = Arguments.createMap().apply {
+                    putString("name", p.name)
+                    putString("ip", p.ip)
+                    putInt("port", p.port)
+                    putDouble("lastSeen", p.lastSeen.toDouble())
+                }
+                array.pushMap(map)
+            }
+            promise.resolve(array)
+        } catch (e: Exception) {
+            promise.reject("GET_PEERS_ERROR", e.message, e)
+        }
+    }
+
+    // =========================================================
+    // QUICK TEXT / CLIPBOARD SHARING
+    // =========================================================
+
+    @ReactMethod
+    fun sendSharedText(text: String, promise: Promise) {
+        try {
+            server?.addSharedText(text, "device")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("SEND_TEXT_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getSharedTexts(promise: Promise) {
+        try {
+            val texts = server?.getSharedTexts() ?: emptyList()
+            val array = Arguments.createArray()
+            for (t in texts) {
+                val map = Arguments.createMap().apply {
+                    putString("id", t.id)
+                    putString("text", t.text)
+                    putDouble("timestamp", t.timestamp.toDouble())
+                    putString("sender", t.sender)
+                }
+                array.pushMap(map)
+            }
+            promise.resolve(array)
+        } catch (e: Exception) {
+            promise.reject("GET_TEXTS_ERROR", e.message, e)
         }
     }
 

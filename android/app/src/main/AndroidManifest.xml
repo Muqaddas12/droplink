@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 <!-- Android 13+ -->
 <uses-permission
     android:name="android.permission.NEARBY_WIFI_DEVICES"
@@ -121,6 +124,13 @@
                 android:resource="@xml/file_paths" />
 
         </provider>
+
+        <!-- Local Share Foreground Service -->
+        <service
+            android:name=".localshare.LocalShareService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
     </application>
 

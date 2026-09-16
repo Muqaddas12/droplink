@@ -1,38 +1,31 @@
 package com.muqaddas123.droplink.localshare
 
 import android.content.ContentResolver
+import android.content.Context
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
+import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Collections
+import java.util.UUID
 import java.util.concurrent.Executors
-
-// =========================================================
-// SHARED FILE
-// =========================================================
 
 data class SharedFile(
     val uri: Uri,
     val name: String,
     val mimeType: String?,
     val size: Long,
-
-    // Number of successful downloads
-    // by other users.
-    @Volatile
-    var downloadCount: Int = 0
+    @Volatile var downloadCount: Int = 0
 )
-
-// =========================================================
-// RECEIVED FILE
-// =========================================================
 
 data class ReceivedFile(
     val name: String,
@@ -42,738 +35,259 @@ data class ReceivedFile(
     val category: String
 )
 
-// =========================================================
-// LOCAL HTTP SERVER
-// =========================================================
-
 class LocalHttpServer(
     private val contentResolver: ContentResolver,
+    private val context: Context,
     private val senderName: String
 ) {
+    companion object {
+        private const val TAG = "DropLink"
+        private const val INVALID_RANGE = -1L
+    }
 
     private var serverSocket: ServerSocket? = null
+    private val sharedFiles = Collections.synchronizedList(mutableListOf<SharedFile>())
+    private val receivedFiles = Collections.synchronizedList(mutableListOf<ReceivedFile>())
+    private val executor = Executors.newFixedThreadPool(8)
+    @Volatile private var running = false
 
-    // LAN sharing does not need an unbounded worker pool.
-    private val executor = Executors.newFixedThreadPool(4)
+    data class SharedText(
+        val id: String,
+        val text: String,
+        val timestamp: Long,
+        val sender: String
+    )
 
-    @Volatile
-    private var running = false
+    private val sharedTexts = Collections.synchronizedList(mutableListOf<SharedText>())
+    var onTextReceived: ((text: String) -> Unit)? = null
+    var onTransferProgress: ((bytes: Long, total: Long, speed: Long, fileName: String, isUpload: Boolean) -> Unit)? = null
 
-    /*
-     * Shared files can be modified while the
-     * server is running.
-     *
-     * This allows:
-     *
-     * Start server
-     *      ↓
-     * Add more files
-     *      ↓
-     * Server keeps running
-     */
-    private val sharedFiles =
-        Collections.synchronizedList(
-            mutableListOf<SharedFile>()
+    fun addSharedText(text: String, sender: String = "device") {
+        if (text.isBlank()) return
+        val item = SharedText(
+            id = UUID.randomUUID().toString(),
+            text = text,
+            timestamp = System.currentTimeMillis(),
+            sender = sender
         )
-
-    /*
-     * Files received from browser/device.
-     */
-    private val receivedFiles =
-        Collections.synchronizedList(
-            mutableListOf<ReceivedFile>()
-        )
-
-    var port: Int = 0
-        private set
-
-    // =========================================================
-    // SERVER STATE
-    // =========================================================
-
-    fun isRunning(): Boolean {
-        return running
-    }
-
-    // =========================================================
-    // REPLACE SHARED FILES
-    // =========================================================
-
-    fun setFiles(
-        files: List<SharedFile>
-    ) {
-
-        synchronized(sharedFiles) {
-
-            sharedFiles.clear()
-
-            sharedFiles.addAll(
-                files
-            )
+        synchronized(sharedTexts) {
+            sharedTexts.add(0, item)
+            if (sharedTexts.size > 50) sharedTexts.removeAt(sharedTexts.size - 1)
         }
     }
 
-    // =========================================================
-    // ADD MORE SHARED FILES
-    // =========================================================
-
-    fun addFiles(
-        files: List<SharedFile>
-    ) {
-
-        if (files.isEmpty()) {
-            return
+    fun getSharedTexts(): List<SharedText> {
+        synchronized(sharedTexts) {
+            return sharedTexts.toList()
         }
+    }
 
-        synchronized(sharedFiles) {
+    fun start(port: Int): Int {
+        if (running) return getPort()
+        val socket = ServerSocket(port)
+        serverSocket = socket
+        running = true
+        scanReceivedFiles()
 
-            /*
-             * Prevent accidentally adding the same
-             * URI multiple times.
-             */
-            val existingUris =
-                sharedFiles
-                    .map {
-                        it.uri.toString()
-                    }
-                    .toHashSet()
-
-            files.forEach { file ->
-
-                if (
-                    !existingUris.contains(
-                        file.uri.toString()
-                    )
-                ) {
-
-                    sharedFiles.add(
-                        file
-                    )
-
-                    existingUris.add(
-                        file.uri.toString()
-                    )
+        executor.execute {
+            while (running && !socket.isClosed) {
+                try {
+                    val client = socket.accept()
+                    client.soTimeout = 30000
+                    executor.execute { handleClient(client) }
+                } catch (e: Exception) {
+                    if (running) Log.w(TAG, "Server accept error", e)
                 }
             }
         }
-
-        android.util.Log.d(
-            "DropLink",
-            "ADDED ${files.size} FILE(S). TOTAL=${getSharedFiles().size}"
-        )
+        return socket.localPort
     }
 
-    // =========================================================
-    // GET SHARED FILES
-    // =========================================================
+    fun stop() {
+        running = false
+        try { serverSocket?.close() } catch (_: Exception) {}
+        serverSocket = null
+    }
+
+    fun isRunning(): Boolean = running && serverSocket?.isClosed == false
+
+    fun getPort(): Int = serverSocket?.localPort ?: -1
+
+    fun setFiles(files: List<SharedFile>) {
+        synchronized(sharedFiles) {
+            sharedFiles.clear()
+            sharedFiles.addAll(files)
+        }
+    }
+
+    fun addFiles(files: List<SharedFile>) {
+        synchronized(sharedFiles) {
+            sharedFiles.addAll(files)
+        }
+    }
 
     fun getSharedFiles(): List<SharedFile> {
-
         synchronized(sharedFiles) {
-
             return sharedFiles.toList()
         }
     }
 
-    // =========================================================
-    // GET RECEIVED FILES
-    // =========================================================
-
     fun getReceivedFiles(): List<ReceivedFile> {
-
         synchronized(receivedFiles) {
-
             return receivedFiles.toList()
         }
     }
-    // =========================================================
-// SCAN ALL RECEIVED FILES FROM DOWNLOAD/DROPLINK
-// =========================================================
 
-fun scanReceivedFiles(): List<ReceivedFile> {
-
-    val root =
-        File(
-            Environment
-                .getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DOWNLOADS
-                ),
-            "DropLink"
-        )
-
-    val scannedFiles =
-        mutableListOf<ReceivedFile>()
-
-    if (root.exists() && root.isDirectory) {
-        root.walkTopDown()
-            .filter { file ->
-                file.isFile
+    fun scanReceivedFiles(): List<ReceivedFile> {
+        val list = mutableListOf<ReceivedFile>()
+        val root = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DropLink")
+        if (root.exists() && root.isDirectory) {
+            root.walkTopDown().filter { it.isFile }.forEach { f ->
+                val cat = f.parentFile?.name ?: "Others"
+                list.add(ReceivedFile(
+                    name = f.name,
+                    mimeType = "application/octet-stream",
+                    size = f.length(),
+                    path = f.absolutePath,
+                    category = cat
+                ))
             }
-            .forEach { file ->
-
-                val category =
-                    file.parentFile
-                        ?.name
-                        ?: "Others"
-
-                val mimeType =
-                    android.webkit.MimeTypeMap
-                        .getSingleton()
-                        .getMimeTypeFromExtension(
-                            file.extension.lowercase()
-                        )
-                        ?: "application/octet-stream"
-
-                scannedFiles.add(
-                    ReceivedFile(
-                        name = file.name,
-                        mimeType = mimeType,
-                        size = file.length(),
-                        path = file.absolutePath,
-                        category = category
-                    )
-                )
-            }
+        }
+        synchronized(receivedFiles) {
+            receivedFiles.clear()
+            receivedFiles.addAll(list.reversed())
+        }
+        return list
     }
 
-    synchronized(receivedFiles) {
-        val map = LinkedHashMap<String, ReceivedFile>()
-        for (f in receivedFiles) {
-            map[f.path] = f
-        }
-        for (f in scannedFiles) {
-            map[f.path] = f
-        }
-
-        val mergedList = map.values.toList().sortedByDescending { file ->
-            try {
-                File(file.path).lastModified()
-            } catch (_: Exception) {
-                0L
-            }
-        }
-
-        receivedFiles.clear()
-        receivedFiles.addAll(mergedList)
-
-        return receivedFiles.toList()
-    }
-}
-
-    // =========================================================
-    // START
-    // =========================================================
-
-    fun start(): Int {
-
-        /*
-         * If already running, don't create another
-         * ServerSocket.
-         */
-        if (running) {
-
-            return port
-        }
-   // Load previously received files
-    // from Download/DropLink
-    scanReceivedFiles()
-        // Prefer a stable port, but remain available when another app owns it.
-        serverSocket = try {
-            ServerSocket(8080)
-        } catch (_: Exception) {
-            // Covers a busy port and platform/network policy restrictions.
-            ServerSocket(0)
-        }
-
-        port =
-            serverSocket!!.localPort
-
-        running = true
-
-        executor.execute {
-
-            while (running) {
-
-                try {
-
-                    val socket =
-                        serverSocket!!.accept()
-
-                    /*
-                     * IMPORTANT:
-                     *
-                     * Every connection gets its own
-                     * worker thread.
-                     *
-                     * Therefore:
-                     *
-                     * Device B downloading
-                     * +
-                     * Device C uploading
-                     *
-                     * can happen simultaneously.
-                     */
-                    executor.execute {
-
-                        handleClient(
-                            socket
-                        )
-                    }
-
-                } catch (e: Exception) {
-
-                    if (running) {
-
-                        android.util.Log.e(
-                            "DropLink",
-                            "ACCEPT ERROR",
-                            e
-                        )
-                    }
-                }
-            }
-        }
-
-        android.util.Log.d(
-            "DropLink",
-            "SERVER STARTED ON PORT $port"
-        )
-
-        return port
-    }
-
-    // =========================================================
-    // STOP
-    // =========================================================
-
-    fun stop() {
-
-        running = false
-
+    private fun handleClient(socket: Socket) {
         try {
+            socket.use { s ->
+                val input = BufferedInputStream(s.getInputStream(), 64 * 1024)
+                val output = BufferedOutputStream(s.getOutputStream(), 64 * 1024)
+                val request = readRequestHeaders(input) ?: return
 
-            serverSocket?.close()
-
-        } catch (_: Exception) {
-        }
-
-        serverSocket = null
-        executor.shutdownNow()
-
-        /*
-         * IMPORTANT:
-         *
-         * Do NOT clear receivedFiles.
-         *
-         * The React Native UI may still need to
-         * display previously received files.
-         */
-        synchronized(sharedFiles) {
-
-            sharedFiles.clear()
-        }
-    }
-
-    // =========================================================
-    // CLIENT
-    // =========================================================
-
-    private fun handleClient(
-        socket: Socket
-    ) {
-
-        try {
-
-            socket.use {
-
-                val input =
-                    BufferedInputStream(
-                        socket.getInputStream()
-                    )
-
-                val output =
-                    BufferedOutputStream(
-                        socket.getOutputStream()
-                    )
-
-                val request =
-                    readRequestHeaders(
-                        input
-                    )
-                        ?: return
-
-                val requestLine =
-                    request
-                        .substringBefore(
-                            "\r\n"
-                        )
-
-                val parts =
-                    requestLine.split(
-                        " "
-                    )
-
-                if (
-                    parts.size < 2
-                ) {
-
+                val firstLine = request.substringBefore("\r\n")
+                val parts = firstLine.split(" ")
+                if (parts.size < 2) {
+                    sendText(output, "400 Bad Request", "Malformed request line")
                     return
                 }
 
-                val method =
-                    parts[0].uppercase()
-
-                val rawPath =
-                    parts[1]
-
-                val decodedPath =
-                    try {
-
-                        URLDecoder.decode(
-                            rawPath,
-                            "UTF-8"
-                        )
-
-                    } catch (_: Exception) {
-
-                        rawPath
-                    }
-
-                android.util.Log.d(
-                    "DropLink",
-                    "$method $decodedPath"
-                )
+                val method = parts[0].uppercase()
+                val rawPath = parts[1].substringBefore("?")
+                val decodedPath = try { URLDecoder.decode(rawPath, "UTF-8") } catch (_: Exception) { rawPath }
 
                 when {
-
-                    // -------------------------------------------------
-                    // HOME
-                    // -------------------------------------------------
-
-                    method == "GET" &&
-                        (
-                            decodedPath == "/" ||
-                                decodedPath.isEmpty()
-                            ) -> {
-
-                        sendIndexPage(
-                            output
-                        )
-                    }
-
-                    // -------------------------------------------------
-                    // SHARED FILES JSON
-                    // -------------------------------------------------
-
-                    method == "GET" &&
-                        decodedPath ==
-                        "/shared" -> {
-
-                        sendSharedFilesJson(
-                            output
-                        )
-                    }
-
-                    // -------------------------------------------------
-                    // RECEIVED FILES JSON
-                    // -------------------------------------------------
-
-                    method == "GET" &&
-                        decodedPath ==
-                        "/received" -> {
-
-                        sendReceivedFilesJson(
-                            output
-                        )
-                    }
-
-                    // -------------------------------------------------
-                    // DOWNLOAD
-                    // -------------------------------------------------
-
-                    method == "GET" &&
-                        decodedPath.startsWith(
-                            "/download/"
-                        ) -> {
-
-                        sendFile(
-                            output,
-                            decodedPath,
-                            request
-                        )
-                    }
-
-                    // -------------------------------------------------
-                    // UPLOAD
-                    // -------------------------------------------------
-
-                    method == "POST" &&
-                        decodedPath ==
-                        "/upload" -> {
-
-                        handleUpload(
-                            input,
-                            output,
-                            request
-                        )
-                    }
-
-                    // -------------------------------------------------
-                    // NOT FOUND
-                    // -------------------------------------------------
-
-                    else -> {
-
-                        sendText(
-                            output,
-                            "404 Not Found",
-                            "Not Found"
-                        )
-                    }
+                    method == "GET" && decodedPath == "/" -> sendIndexPage(output)
+                    method == "GET" && decodedPath == "/shared" -> sendSharedFilesJson(output)
+                    method == "GET" && decodedPath == "/received" -> sendReceivedFilesJson(output)
+                    method == "GET" && decodedPath == "/text" -> sendSharedTextsJson(output)
+                    method == "POST" && decodedPath == "/text" -> handleSharedTextPost(input, output, request)
+                    method == "GET" && decodedPath.startsWith("/download/") -> sendFile(output, decodedPath, request, isPreview = false)
+                    method == "GET" && decodedPath.startsWith("/preview/") -> sendFile(output, decodedPath.replaceFirst("/preview/", "/download/"), request, isPreview = true)
+                    method == "POST" && decodedPath == "/upload" -> handleUpload(input, output, request)
+                    else -> sendText(output, "404 Not Found", "Not Found")
                 }
             }
-
         } catch (e: Exception) {
-
-            if (running) {
-
-                android.util.Log.e(
-                    "DropLink",
-                    "CLIENT ERROR",
-                    e
-                )
-            }
+            if (running) Log.e(TAG, "Client handling error", e)
         }
     }
 
-    // =========================================================
-    // HTTP HEADER READER
-    // =========================================================
-
-    private fun readRequestHeaders(
-        input: BufferedInputStream
-    ): String? {
-
-        val builder =
-            StringBuilder()
-
-        var previous =
-            -1
-
+    private fun readRequestHeaders(input: BufferedInputStream): String? {
+        val builder = StringBuilder()
+        var lastFour = 0
         while (true) {
-
-            val current =
-                input.read()
-
-            if (
-                current == -1
-            ) {
-
-                return null
-            }
-
-            builder.append(
-                current.toChar()
-            )
-
-            if (
-                previous ==
-                '\r'.code &&
-                current ==
-                '\n'.code
-            ) {
-
-                if (
-                    builder
-                        .toString()
-                        .endsWith(
-                            "\r\n\r\n"
-                        )
-                ) {
-
-                    break
-                }
-            }
-
-            previous =
-                current
-
-            /*
-             * Prevent enormous HTTP headers.
-             */
-            if (
-                builder.length >
-                32 * 1024
-            ) {
-
-                return null
-            }
+            val b = input.read()
+            if (b == -1) return null
+            builder.append(b.toChar())
+            lastFour = (lastFour shl 8) or (b and 0xFF)
+            if (lastFour == 0x0D0A0D0A) break
+            if (builder.length > 32 * 1024) return null
         }
-
         return builder.toString()
     }
 
-    // =========================================================
-    // GET HEADER
-    // =========================================================
-
-    private fun getHeader(
-        request: String,
-        name: String
-    ): String? {
-
-        val target =
-            name.lowercase()
-
-        return request
-            .split(
-                "\r\n"
-            )
-            .drop(1)
-            .firstOrNull {
-
-                it.substringBefore(
-                    ":"
-                )
-                    .trim()
-                    .lowercase() ==
-                    target
-            }
-            ?.substringAfter(
-                ":",
-                ""
-            )
-            ?.trim()
+    private fun getHeader(request: String, name: String): String? {
+        val target = name.lowercase()
+        return request.split("\r\n").drop(1).firstOrNull {
+            it.substringBefore(":").trim().lowercase() == target
+        }?.substringAfter(":", "")?.trim()
     }
 
-    // =========================================================
-    // INDEX PAGE
-    // =========================================================
-
-    private fun sendIndexPage(
-        output: BufferedOutputStream
-    ) {
-
-        val files =
-            getSharedFiles()
-
-        val html =
-            buildString {
-
-                append(
-                    """
-<!DOCTYPE html>
-<html>
-
+    private fun sendIndexPage(output: BufferedOutputStream) {
+        val files = getSharedFiles()
+        val html = buildString {
+            append("""<!DOCTYPE html>
+<html lang="en">
 <head>
-
 <meta charset="UTF-8">
-
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1"
->
-
-<title>DropLink</title>
-
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DropLink - Fast Local Share</title>
 <style>
-
-* {
-    box-sizing: border-box;
-}
-
+* { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-    margin: 0;
     padding: 20px;
-    font-family: Arial, sans-serif;
-    background: #f5f7fb;
-    color: #111827;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #0f172a;
+    color: #f8fafc;
 }
-
-.container {
-    max-width: 720px;
-    margin: auto;
-}
-
+.container { max-width: 760px; margin: auto; }
 .header {
-    background: #2563eb;
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
     color: white;
-    padding: 28px;
-    border-radius: 22px;
+    padding: 24px;
+    border-radius: 20px;
     margin-bottom: 20px;
+    box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.4);
 }
-
-.header h1 {
-    margin: 0;
-    font-size: 28px;
-}
-
-.header p {
-    margin-top: 8px;
-    opacity: .9;
-}
-
+.header h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+.header p { margin-top: 6px; opacity: .9; font-size: 13px; }
 .card {
-    background: white;
+    background: #1e293b;
+    border: 1px solid #334155;
     border-radius: 18px;
     padding: 20px;
-    margin-bottom: 16px;
-    box-shadow:
-        0 2px 10px rgba(0,0,0,.05);
+    margin-bottom: 18px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.2);
 }
-
 .card-title {
-    font-size: 19px;
-    font-weight: 800;
+    font-size: 16px;
+    font-weight: 700;
     margin-bottom: 14px;
+    color: #f1f5f9;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
-
-.file {
-    background: #f8fafc;
+.drop-zone {
+    border: 2px dashed #475569;
     border-radius: 14px;
-    padding: 15px;
-    margin-bottom: 10px;
+    padding: 24px 16px;
+    text-align: center;
+    background: #0f172a;
+    cursor: pointer;
+    transition: all .2s;
 }
-
-.file-name {
-    font-weight: bold;
-    word-break: break-word;
-}
-
-.file-size {
-    color: #6b7280;
-    margin-top: 5px;
-}
-
-.file-downloads {
-    color: #2563eb;
-    margin-top: 5px;
-    font-size: 13px;
-}
-
-.download-all { width: 100%; margin: 0 0 12px; padding: 12px 16px; border: 0; border-radius: 10px; background: #0f172a; color: white; font-size: 14px; font-weight: 800; cursor: pointer; }
-.download-all:disabled { opacity: .6; cursor: wait; }
-.download-status { display: none; margin: 0 0 14px; }
-.download {
-    display: inline-block;
-    margin-top: 10px;
-    padding: 10px 16px;
+.drop-zone.dragover { border-color: #38bdf8; background: rgba(56, 189, 248, 0.1); }
+.drop-zone-icon { font-size: 32px; margin-bottom: 8px; }
+.drop-zone-text { font-size: 14px; color: #94a3b8; font-weight: 500; }
+.btn-row { display: flex; gap: 10px; margin-top: 14px; }
+.btn-select {
+    flex: 1;
+    background: #334155;
+    color: #f8fafc;
+    border: 1px solid #475569;
+    padding: 10px 14px;
     border-radius: 10px;
-    background: #2563eb;
-    color: white;
-    text-decoration: none;
     font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: center;
 }
-
-input[type=file] {
-    width: 100%;
-    padding: 12px;
-    border: 1px solid #d1d5db;
-    border-radius: 12px;
-    background: white;
-}
-
-.upload-button {
+.btn-select:hover { background: #475569; }
+.upload-btn {
     width: 100%;
     margin-top: 12px;
     padding: 13px;
@@ -784,828 +298,515 @@ input[type=file] {
     font-size: 15px;
     font-weight: 800;
     cursor: pointer;
+    transition: background .2s;
 }
-
-.upload-button:disabled {
-    opacity: .6;
-}
-
+.upload-btn:hover { background: #059669; }
+.upload-btn:disabled { opacity: .5; cursor: not-allowed; }
 .status {
     margin-top: 14px;
     padding: 12px;
     border-radius: 10px;
-    background: #f3f4f6;
+    background: #0f172a;
+    border: 1px solid #334155;
     font-size: 13px;
+    color: #cbd5e1;
 }
-
 .progress {
     width: 100%;
-    height: 10px;
+    height: 8px;
     margin-top: 10px;
-    border-radius: 10px;
-    background: #e5e7eb;
+    border-radius: 6px;
+    background: #334155;
     overflow: hidden;
 }
-
-.progress-bar {
-    height: 100%;
-    width: 0%;
-    background: #10b981;
-}
-
-.received-file {
-    background: #ecfdf5;
-    border: 1px solid #a7f3d0;
-    border-radius: 14px;
+.progress-bar { height: 100%; width: 0%; background: #10b981; transition: width .15s; }
+.file {
     padding: 14px;
+    border-bottom: 1px solid #334155;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+.file:last-child { border-bottom: none; }
+.file-info { flex: 1; min-width: 0; }
+.file-name { font-weight: 600; font-size: 14px; word-break: break-all; color: #f8fafc; }
+.file-size { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+.file-actions { display: flex; gap: 8px; }
+.download {
+    padding: 8px 14px;
+    border-radius: 10px;
+    background: #2563eb;
+    color: white;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 12px;
+    border: none;
+    cursor: pointer;
+}
+.download:hover { background: #1d4ed8; }
+.preview-btn {
+    padding: 8px 14px;
+    border-radius: 10px;
+    background: #475569;
+    color: white;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 12px;
+    border: none;
+    cursor: pointer;
+}
+.preview-btn:hover { background: #64748b; }
+.download-all {
+    width: 100%;
+    margin-bottom: 14px;
+    padding: 12px;
+    border: none;
+    border-radius: 12px;
+    background: #3b82f6;
+    color: white;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.download-all:disabled { opacity: .5; cursor: wait; }
+.download-status { display: none; margin-bottom: 14px; }
+.text-box {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+.text-content {
+    font-family: monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #e2e8f0;
+    margin-bottom: 8px;
+}
+.copy-btn {
+    background: #334155;
+    border: 1px solid #475569;
+    color: #cbd5e1;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.copy-btn:hover { background: #475569; }
+.text-input {
+    width: 100%;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 10px;
+    color: #f8fafc;
+    font-family: inherit;
+    font-size: 13px;
+    resize: vertical;
+}
+.text-input:focus { outline: none; border-color: #3b82f6; }
+.modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.85);
+    z-index: 9999;
+    justify-content: center;
+    align-items: center;
+    padding: 16px;
+}
+.modal-content {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 20px;
+    max-width: 850px;
+    width: 100%;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 18px;
+    border-bottom: 1px solid #334155;
+}
+.modal-title { font-weight: 700; font-size: 14px; color: #f8fafc; word-break: break-all; }
+.close-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: #94a3b8; }
+.close-btn:hover { color: #f8fafc; }
+.modal-body { padding: 18px; text-align: center; overflow-y: auto; }
+.overlay-drag {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(37, 99, 235, 0.9);
+    z-index: 10000;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    color: white;
+    font-size: 22px;
+    font-weight: 800;
+    pointer-events: none;
+}
+.received-file {
+    background: #0f172a;
+    border: 1px solid #10b981;
+    border-radius: 12px;
+    padding: 12px;
     margin-bottom: 10px;
 }
-
 .received-category {
     display: inline-block;
-    margin-top: 7px;
-    padding: 4px 8px;
-    border-radius: 7px;
-    background: #d1fae5;
-    color: #047857;
+    margin-top: 6px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
     font-size: 11px;
-    font-weight: bold;
+    font-weight: 700;
+    text-transform: uppercase;
 }
-
 .empty {
-    color: #6b7280;
+    padding: 18px;
+    text-align: center;
+    color: #64748b;
     font-size: 13px;
+    border: 1px dashed #334155;
+    border-radius: 12px;
 }
-
 </style>
-
 </head>
-
 <body>
-
 <div class="container">
+    <div class="header">
+        <h1>DropLink</h1>
+        <p>Connected to <b>${escapeHtml(senderName)}</b>. Transfer files directly over local Wi-Fi.</p>
+    </div>
 
-<div class="header">
+    <div class="card">
+        <div class="card-title">📤 Upload Files or Folders</div>
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+            <div class="drop-zone-icon">📁</div>
+            <div class="drop-zone-text">Click or drag & drop files / folders here</div>
+        </div>
+        <div class="btn-row">
+            <button class="btn-select" onclick="document.getElementById('fileInput').click()">Select Files</button>
+            <button class="btn-select" onclick="document.getElementById('folderInput').click()">Select Folder</button>
+        </div>
+        <input type="file" id="fileInput" multiple style="display:none;" onchange="handleFilesSelected(this.files)">
+        <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none;" onchange="handleFilesSelected(this.files)">
+        <div id="selectedCount" style="margin-top: 10px; font-size: 12px; color: #94a3b8; display: none;"></div>
+        <button id="uploadButton" class="upload-btn" onclick="uploadSelectedFiles()" disabled>Upload to Device</button>
+        <div id="uploadStatus" class="status" style="display:none;"></div>
+        <div class="progress" id="progressWrap" style="display:none;">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+    </div>
 
-<h1>${escapeHtml(senderName)} wants to share files</h1>
+    <div class="card">
+        <div class="card-title">📝 Quick Text & Clipboard</div>
+        <div id="latestTextContainer" class="text-box" style="display:none;">
+            <div style="font-size: 11px; color: #94a3b8; margin-bottom: 6px;">LATEST SHARED TEXT:</div>
+            <div id="latestTextContent" class="text-content"></div>
+            <button class="copy-btn" onclick="copySharedText()">📋 Copy to Clipboard</button>
+        </div>
+        <textarea id="quickTextInput" class="text-input" placeholder="Type or paste a message, URL, or note to send to phone..." rows="3"></textarea>
+        <button class="upload-btn" style="background: #6366f1; margin-top: 10px;" onclick="sendQuickText()">Send Text to Phone</button>
+        <div id="textStatus" class="status" style="display:none;"></div>
+    </div>
 
-<p>
-Open a file below to download it directly from this phone.
-</p>
+    <div class="card">
+        <div class="card-title">📥 Files on this device</div>
+        <button id="downloadAllButton" class="download-all" onclick="downloadAll()">Download All Files</button>
+        <div id="downloadStatus" class="status download-status"></div>
+""")
 
-</div>
+            if (files.isEmpty()) {
+                append("""<div class="empty">No files are currently shared by this device.</div>""")
+            } else {
+                files.forEachIndexed { index, file ->
+                    val encodedName = URLEncoder.encode(file.name, "UTF-8")
+                    val downloadText = if (file.downloadCount == 1) "Downloaded 1 time" else "Downloaded ${file.downloadCount} times"
+                    val mime = (file.mimeType ?: "").lowercase()
+                    val canPreview = mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/") || mime == "application/pdf"
+                    val previewButton = if (canPreview) {
+                        """<button class="preview-btn" onclick="previewMedia($index, '${escapeHtmlJs(file.name)}', '$mime')">👁️ Preview / Stream</button>"""
+                    } else ""
 
-<div class="card">
-
-<div class="card-title">
-Send files to this device
-</div>
-
-<input
-    id="files"
-    type="file"
-    multiple
->
-
-<button
-    id="uploadButton"
-    class="upload-button"
-    onclick="uploadFiles()"
->
-Upload Files
-</button>
-
-<div
-    id="status"
-    class="status"
->
-Select files to upload.
-</div>
-
-</div>
-
-<div class="card">
-
-<div class="card-title">
-Files available from this device
-</div>
-
-<button id="downloadAllButton" class="download-all" onclick="downloadAll()">Download all files</button>
-<div id="downloadStatus" class="status download-status"></div>
-"""
-                )
-
-                if (
-                    files.isEmpty()
-                ) {
-
-                    append(
-                        """
-<div class="empty">
-No shared files.
-</div>
-"""
-                    )
-
-                } else {
-
-                    files.forEachIndexed {
-
-                        index,
-                        file ->
-
-                        val encodedName =
-                            URLEncoder.encode(
-                                file.name,
-                                "UTF-8"
-                            )
-
-                        val downloadText =
-                            if (
-                                file.downloadCount == 1
-                            ) {
-                                "Downloaded 1 time"
-                            } else {
-                                "Downloaded ${file.downloadCount} times"
-                            }
-
-                        append(
-                            """
+                    append("""
 <div class="file">
-
-<div class="file-name">
-${escapeHtml(file.name)}
+    <div class="file-info">
+        <div class="file-name">${escapeHtml(file.name)}</div>
+        <div class="file-size">${formatSize(file.size)} &bull; <span id="download-count-$index">$downloadText</span></div>
+    </div>
+    <div class="file-actions">
+        <a class="download" href="/download/$index/$encodedName" onclick="downloadFile($index, '$encodedName', ${file.size}, event)">↓ Download</a>
+        $previewButton
+    </div>
 </div>
-
-<div class="file-size">
-${formatSize(file.size)}
-</div>
-
-<div class="file-downloads" id="download-count-$index">
-$downloadText
-</div>
-
-<a
-    class="download"
-    href="/download/$index/$encodedName"
-
->
-Download
-</a>
-
-</div>
-"""
-                        )
-                    }
+""")
                 }
+            }
 
-                append(
-                    """
+            append("""
+    </div>
 
+    <div class="card">
+        <div class="card-title">💾 Received by this device</div>
+        <div id="receivedFiles"><div class="empty">Checking received files...</div></div>
+    </div>
 </div>
 
-<div class="card">
+<div class="overlay-drag" id="overlayDrag">Drop files or folders to upload</div>
 
-<div class="card-title">
-Files received by this device
-</div>
-
-<div id="receivedFiles">
-
-<div class="empty">
-Checking received files...
-</div>
-
-</div>
-
-</div>
-
+<div class="modal-overlay" id="mediaModal" onclick="closeModal(event)">
+    <div class="modal-content">
+        <div class="modal-header">
+            <div class="modal-title" id="modalTitle">Media Preview</div>
+            <button class="close-btn" onclick="closeModalDirect()">&times;</button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+    </div>
 </div>
 
 <script>
+let queuedFiles = [];
+let latestReceivedText = "";
+
+function escapeHtml(str) {
+    if (!str) return "";
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
 
 function formatSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + " MB";
+    return (bytes / 1073741824).toFixed(2) + " GB";
+}
 
-    bytes = Number(bytes) || 0;
+function handleFilesSelected(files) {
+    if (!files || files.length === 0) return;
+    queuedFiles = Array.from(files);
+    const countDiv = document.getElementById("selectedCount");
+    countDiv.style.display = "block";
+    let totalBytes = queuedFiles.reduce((acc, f) => acc + (f.size || 0), 0);
+    countDiv.textContent = queuedFiles.length + " item(s) selected (" + formatSize(totalBytes) + ")";
+    document.getElementById("uploadButton").disabled = false;
+}
 
-    if (bytes < 1024) {
-        return bytes.toFixed(0) + " B";
+window.addEventListener("dragenter", (e) => { e.preventDefault(); document.getElementById("overlayDrag").style.display = "flex"; });
+window.addEventListener("dragover", (e) => { e.preventDefault(); });
+window.addEventListener("dragleave", (e) => {
+    if (e.clientX === 0 || e.clientY === 0) document.getElementById("overlayDrag").style.display = "none";
+});
+window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    document.getElementById("overlayDrag").style.display = "none";
+    if (e.dataTransfer && e.dataTransfer.files) handleFilesSelected(e.dataTransfer.files);
+});
+
+async function uploadSelectedFiles() {
+    if (queuedFiles.length === 0) return;
+    const btn = document.getElementById("uploadButton");
+    const status = document.getElementById("uploadStatus");
+    const pWrap = document.getElementById("progressWrap");
+    const pBar = document.getElementById("progressBar");
+
+    btn.disabled = true;
+    pWrap.style.display = "block";
+    status.style.display = "block";
+
+    for (let i = 0; i < queuedFiles.length; i++) {
+        const file = queuedFiles[i];
+        const relPath = file.webkitRelativePath || file.name;
+        status.textContent = "Uploading (" + (i+1) + "/" + queuedFiles.length + "): " + file.name + "...";
+
+        await new Promise((resolve) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", "/upload", true);
+            xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
+            xhr.setRequestHeader("X-Relative-Path", encodeURIComponent(relPath));
+            xhr.setRequestHeader("X-File-Type", file.type || "application/octet-stream");
+
+            let lastTime = Date.now();
+            let lastBytes = 0;
+
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    pBar.style.width = pct + "%";
+                    const now = Date.now();
+                    if (now - lastTime >= 500) {
+                        const speed = ((e.loaded - lastBytes) * 1000) / Math.max(1, now - lastTime);
+                        status.textContent = "Uploading (" + (i+1) + "/" + queuedFiles.length + "): " + file.name + " (" + pct + "% at " + formatSize(speed) + "/s)";
+                        lastTime = now;
+                        lastBytes = e.loaded;
+                    }
+                }
+            };
+            xhr.onload = () => { resolve(); };
+            xhr.onerror = () => { resolve(); };
+            xhr.send(file);
+        });
     }
 
-    if (bytes < 1024 * 1024) {
-        return (
-            bytes / 1024
-        ).toFixed(1) + " KB";
+    status.textContent = "All files uploaded successfully!";
+    pBar.style.width = "100%";
+    queuedFiles = [];
+    document.getElementById("fileInput").value = "";
+    document.getElementById("folderInput").value = "";
+    document.getElementById("selectedCount").style.display = "none";
+    loadReceivedFiles();
+}
+
+async function sendQuickText() {
+    const input = document.getElementById("quickTextInput");
+    const text = input.value.trim();
+    if (!text) return;
+    const status = document.getElementById("textStatus");
+    status.style.display = "block";
+    status.textContent = "Sending text...";
+    try {
+        const res = await fetch("/text", { method: "POST", body: text });
+        if (res.ok) {
+            status.textContent = "Text shared with device!";
+            input.value = "";
+            loadSharedTexts();
+        } else {
+            status.textContent = "Failed to send text.";
+        }
+    } catch (e) {
+        status.textContent = "Error: " + e.message;
     }
+}
 
-    if (
-        bytes <
-        1024 * 1024 * 1024
-    ) {
+async function loadSharedTexts() {
+    try {
+        const res = await fetch("/text");
+        if (!res.ok) return;
+        const list = await res.json();
+        if (list && list.length > 0) {
+            latestReceivedText = list[0].text;
+            document.getElementById("latestTextContainer").style.display = "block";
+            document.getElementById("latestTextContent").textContent = latestReceivedText;
+        }
+    } catch (_) {}
+}
 
-        return (
-            bytes /
-            (1024 * 1024)
-        ).toFixed(1) + " MB";
+function copySharedText() {
+    if (!latestReceivedText) return;
+    navigator.clipboard.writeText(latestReceivedText).then(() => {
+        alert("Text copied to clipboard!");
+    });
+}
+
+function previewMedia(index, name, mime) {
+    const modal = document.getElementById("mediaModal");
+    const title = document.getElementById("modalTitle");
+    const body = document.getElementById("modalBody");
+    title.textContent = name;
+    body.innerHTML = "";
+
+    const url = "/preview/" + index + "/" + encodeURIComponent(name);
+    if (mime.startsWith("image/")) {
+        body.innerHTML = "<img src='" + url + "' style='max-width:100%; max-height:75vh; border-radius:10px; object-fit:contain;'>";
+    } else if (mime.startsWith("video/")) {
+        body.innerHTML = "<video controls autoplay src='" + url + "' style='max-width:100%; max-height:75vh; border-radius:10px;'></video>";
+    } else if (mime.startsWith("audio/")) {
+        body.innerHTML = "<audio controls autoplay src='" + url + "' style='width:100%; margin-top:20px;'></audio>";
+    } else if (mime === "application/pdf") {
+        body.innerHTML = "<iframe src='" + url + "' style='width:100%; height:75vh; border:none; border-radius:10px;'></iframe>";
     }
-
-    return (
-        bytes /
-        (1024 * 1024 * 1024)
-    ).toFixed(2) + " GB";
+    modal.style.display = "flex";
 }
 
-
-function formatSpeed(
-    bytesPerSecond
-) {
-
-    return (
-        formatSize(
-            bytesPerSecond
-        ) + "/s"
-    );
+function closeModal(e) {
+    if (e.target.id === "mediaModal") closeModalDirect();
 }
 
+function closeModalDirect() {
+    const modal = document.getElementById("mediaModal");
+    const body = document.getElementById("modalBody");
+    body.innerHTML = "";
+    modal.style.display = "none";
+}
 
-function formatTime(
-    seconds
-) {
+async function downloadFile(index, name, size, e) {
+    // Handled by browser download anchor
+}
 
-    seconds =
-        Math.max(
-            0,
-            Math.floor(
-                Number(seconds) || 0
-            )
-        );
-
-    const hours =
-        Math.floor(
-            seconds / 3600
-        );
-
-    const minutes =
-        Math.floor(
-            (seconds % 3600) / 60
-        );
-
-    const secs =
-        seconds % 60;
-
-    if (hours > 0) {
-
-        return (
-            String(hours).padStart(2, "0") +
-            ":" +
-            String(minutes).padStart(2, "0") +
-            ":" +
-            String(secs).padStart(2, "0")
-        );
+async function downloadAll() {
+    const btn = document.getElementById("downloadAllButton");
+    const status = document.getElementById("downloadStatus");
+    btn.disabled = true;
+    status.style.display = "block";
+    try {
+        const res = await fetch("/shared");
+        const files = await res.json();
+        for (let i = 0; i < files.length; i++) {
+            const f = files[i];
+            status.textContent = "Downloading (" + (i+1) + "/" + files.length + "): " + f.name;
+            const a = document.createElement("a");
+            a.href = "/download/" + f.index + "/" + encodeURIComponent(f.name);
+            a.download = f.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            await new Promise(r => setTimeout(r, 600));
+        }
+        status.textContent = "All files downloaded.";
+    } catch (e) {
+        status.textContent = "Download failed: " + e.message;
+    } finally {
+        btn.disabled = false;
     }
-
-    return (
-        String(minutes).padStart(2, "0") +
-        ":" +
-        String(secs).padStart(2, "0")
-    );
 }
-
-
-function setDownloadStatus(value) { const status = document.getElementById("downloadStatus"); if (status) { status.style.display = "block"; status.innerHTML = value; } }
-function updateDownloadCounts() { return fetch("/shared").then(function(response) { return response.json(); }).then(function(files) { files.forEach(function(file) { const count = document.getElementById("download-count-" + file.index); if (count) { count.innerText = file.downloadCount === 1 ? "Downloaded 1 time" : "Downloaded " + file.downloadCount + " times"; } }); }); }
-async function downloadFile(index, encodedName, expectedSize, event, label) {
-    if (event) event.preventDefault();
-    const name = decodeURIComponent(String(encodedName).replace(/\+/g, " "));
-    const startedAt = Date.now(); let loaded = 0; let total = Number(expectedSize) || 0;
-    const response = await fetch("/download/" + index + "/" + encodedName);
-    if (!response.ok) throw new Error("HTTP " + response.status);
-    total = Number(response.headers.get("Content-Length")) || total;
-    const chunks = []; const reader = response.body && response.body.getReader ? response.body.getReader() : null;
-    if (reader) { while (true) { const result = await reader.read(); if (result.done) break; chunks.push(result.value); loaded += result.value.length; const elapsed = Math.max(.001, (Date.now() - startedAt) / 1000); const speed = loaded / elapsed; const remaining = Math.max(0, total - loaded); const eta = speed > 0 ? remaining / speed : 0; const percent = total > 0 ? (loaded / total) * 100 : 0; setDownloadStatus("<b>" + escapeHtmlJs(name) + "</b><br>" + (label || "Downloading") + "<br><br>" + formatSize(loaded) + " / " + formatSize(total) + " · " + percent.toFixed(1) + "%<br>" + formatSpeed(speed) + " · " + formatSize(remaining) + " remaining · ETA " + (speed > 0 ? formatTime(eta) : "--:--") + "<div class='progress'><div class='progress-bar' style='width:" + percent + "%'></div></div>"); } } else { const blob = await response.blob(); chunks.push(blob); loaded = blob.size; }
-    const blob = new Blob(chunks); const link = document.createElement("a"); const url = URL.createObjectURL(blob); link.href = url; link.download = name; document.body.appendChild(link); link.click(); link.remove(); setTimeout(function() { URL.revokeObjectURL(url); }, 1000); setDownloadStatus("✓ <b>" + escapeHtmlJs(name) + "</b> downloaded<br>" + formatSize(loaded) + " complete"); await new Promise(function(resolve) { setTimeout(resolve, 250); }); await updateDownloadCounts();
-}
-async function downloadAll() { const button = document.getElementById("downloadAllButton"); if (button) button.disabled = true; try { const files = await fetch("/shared").then(function(response) { return response.json(); }); for (let index = 0; index < files.length; index++) { const file = files[index]; await downloadFile(file.index, encodeURIComponent(file.name), file.size, null, "File " + (index + 1) + " of " + files.length); } setDownloadStatus("✓ All " + files.length + " files downloaded successfully."); } catch (error) { setDownloadStatus("✕ Download failed: " + escapeHtmlJs(error.message || String(error))); } finally { if (button) button.disabled = false; } }
-function uploadFiles() {
-
-    const input =
-        document.getElementById(
-            "files"
-        );
-
-    const button =
-        document.getElementById(
-            "uploadButton"
-        );
-
-    const status =
-        document.getElementById(
-            "status"
-        );
-
-    const files =
-        input.files;
-
-    if (
-        !files ||
-        files.length === 0
-    ) {
-
-        status.innerText =
-            "Please select a file.";
-
-        return;
-    }
-
-    button.disabled = true;
-
-    uploadNext(
-        files,
-        0,
-        button,
-        status
-    );
-}
-
-
-function uploadNext(
-    files,
-    index,
-    button,
-    status
-) {
-
-    if (
-        index >=
-        files.length
-    ) {
-
-        status.innerText =
-            "✓ All files uploaded successfully.";
-
-        button.disabled =
-            false;
-
-        loadReceivedFiles();
-
-        return;
-    }
-
-    const file =
-        files[index];
-
-    const total =
-        Number(file.size) || 0;
-
-    const startedAt =
-        Date.now();
-
-    status.innerHTML =
-        "Uploading <b>" +
-        escapeHtmlJs(
-            file.name
-        ) +
-        "</b>" +
-
-        "<br><br>" +
-
-        "<span id='uploadAmount'>" +
-        "0 B / " +
-        formatSize(total) +
-        "</span>" +
-
-        "<br>" +
-
-        "<span id='uploadPercent'>" +
-        "0.0%" +
-        "</span>" +
-
-        " · " +
-
-        "<span id='uploadSpeed'>" +
-        "0 B/s" +
-        "</span>" +
-
-        " · ETA " +
-
-        "<span id='uploadEta'>" +
-        "--:--" +
-        "</span>" +
-
-        "<div class='progress'>" +
-
-        "<div " +
-        "id='progressBar' " +
-        "class='progress-bar'>" +
-
-        "</div>" +
-
-        "</div>";
-
-
-    const xhr =
-        new XMLHttpRequest();
-
-
-    xhr.open(
-        "POST",
-        "/upload",
-        true
-    );
-
-
-    xhr.setRequestHeader(
-        "X-File-Name",
-        encodeURIComponent(
-            file.name
-        )
-    );
-
-
-    xhr.setRequestHeader(
-        "X-File-Type",
-        file.type ||
-        "application/octet-stream"
-    );
-
-
-    xhr.setRequestHeader(
-        "X-File-Size",
-        String(total)
-    );
-
-
-    xhr.upload.onprogress =
-        function(event) {
-
-            const loaded =
-                Number(
-                    event.loaded
-                ) || 0;
-
-            const safeTotal =
-                total;
-
-            let percent =
-                0;
-
-            if (
-                safeTotal > 0
-            ) {
-
-                percent =
-                    (
-                        loaded /
-                        safeTotal
-                    ) * 100;
-            }
-
-            percent =
-                Math.min(
-                    100,
-                    Math.max(
-                        0,
-                        percent
-                    )
-                );
-
-            const elapsedSeconds =
-                Math.max(
-                    0.001,
-                    (
-                        Date.now() -
-                        startedAt
-                    ) / 1000
-                );
-
-            const speed =
-                loaded /
-                elapsedSeconds;
-
-            const remaining =
-                Math.max(
-                    0,
-                    safeTotal -
-                    loaded
-                );
-
-            let eta =
-                0;
-
-            if (
-                speed > 0
-            ) {
-
-                eta =
-                    remaining /
-                    speed;
-            }
-
-            const amount =
-                document.getElementById(
-                    "uploadAmount"
-                );
-
-            const percentElement =
-                document.getElementById(
-                    "uploadPercent"
-                );
-
-            const speedElement =
-                document.getElementById(
-                    "uploadSpeed"
-                );
-
-            const etaElement =
-                document.getElementById(
-                    "uploadEta"
-                );
-
-            const bar =
-                document.getElementById(
-                    "progressBar"
-                );
-
-            if (amount) {
-
-                amount.innerText =
-                    formatSize(
-                        loaded
-                    ) +
-                    " / " +
-                    formatSize(
-                        safeTotal
-                    );
-            }
-
-            if (
-                percentElement
-            ) {
-
-                percentElement.innerText =
-                    percent.toFixed(
-                        1
-                    ) +
-                    "%";
-            }
-
-            if (
-                speedElement
-            ) {
-
-                speedElement.innerText =
-                    formatSpeed(
-                        speed
-                    );
-            }
-
-            if (
-                etaElement
-            ) {
-
-                etaElement.innerText =
-                    speed > 0
-                        ? formatTime(
-                            eta
-                        )
-                        : "--:--";
-            }
-
-            if (bar) {
-
-                bar.style.width =
-                    percent +
-                    "%";
-            }
-        };
-
-
-    xhr.onload =
-        function() {
-
-            if (
-                xhr.status >= 200 &&
-                xhr.status < 300
-            ) {
-
-                status.innerHTML =
-                    "✓ <b>" +
-                    escapeHtmlJs(
-                        file.name
-                    ) +
-                    "</b>" +
-                    "<br>" +
-                    formatSize(
-                        total
-                    ) +
-                    " uploaded successfully.";
-
-                loadReceivedFiles();
-
-                /*
-                 * Start next file.
-                 */
-                uploadNext(
-                    files,
-                    index + 1,
-                    button,
-                    status
-                );
-
-            } else {
-
-                status.innerText =
-                    "✕ Upload failed: " +
-                    file.name +
-                    " (" +
-                    xhr.status +
-                    ")";
-
-                button.disabled =
-                    false;
-            }
-        };
-
-
-    xhr.onerror =
-        function() {
-
-            status.innerText =
-                "✕ Network error while uploading " +
-                file.name;
-
-            button.disabled =
-                false;
-        };
-
-
-    xhr.onabort =
-        function() {
-
-            status.innerText =
-                "Upload cancelled: " +
-                file.name;
-
-            button.disabled =
-                false;
-        };
-
-
-    xhr.send(
-        file
-    );
-}
-
-
-function escapeHtmlJs(
-    value
-) {
-
-    return String(value)
-        .replace(
-            /&/g,
-            "&amp;"
-        )
-        .replace(
-            /</g,
-            "&lt;"
-        )
-        .replace(
-            />/g,
-            "&gt;"
-        )
-        .replace(
-            /"/g,
-            "&quot;"
-        )
-        .replace(
-            /'/g,
-            "&#039;"
-        );
-}
-
 
 async function loadReceivedFiles() {
-
     try {
-
-        const response =
-            await fetch(
-                "/received"
-            );
-
-        if (
-            !response.ok
-        ) {
-
-            throw new Error(
-                "HTTP " +
-                response.status
-            );
-        }
-
-        const files =
-            await response.json();
-
-        const container =
-            document.getElementById(
-                "receivedFiles"
-            );
-
-        if (!container) {
+        const res = await fetch("/received");
+        if (!res.ok) return;
+        const files = await res.json();
+        const container = document.getElementById("receivedFiles");
+        if (files.length === 0) {
+            container.innerHTML = "<div class='empty'>No files received yet.</div>";
             return;
         }
-
-        if (
-            !files ||
-            files.length === 0
-        ) {
-
-            container.innerHTML =
-                "<div class='empty'>" +
-                "No files received yet." +
-                "</div>";
-
-            return;
-        }
-
-        container.innerHTML =
-            files
-                .map(
-                    function(file) {
-
-                        return (
-                            "<div class='received-file'>" +
-
-                            "<div class='file-name'>" +
-                            escapeHtmlJs(
-                                file.name
-                            ) +
-                            "</div>" +
-
-                            "<div class='file-size'>" +
-                            formatSize(
-                                file.size
-                            ) +
-                            "</div>" +
-
-                            "<span class='received-category'>" +
-                            escapeHtmlJs(
-                                file.category
-                            ) +
-                            "</span>" +
-
-                            "</div>"
-                        );
-                    }
-                )
-                .join("");
-
-    } catch (error) {
-
-        console.log(
-            "Received files error:",
-            error
-        );
-    }
+        container.innerHTML = files.map(f =>
+            "<div class='received-file'>" +
+            "<div class='file-name'>" + escapeHtml(f.name) + "</div>" +
+            "<div class='file-size'>" + formatSize(f.size) + "</div>" +
+            "<span class='received-category'>" + escapeHtml(f.category) + "</span>" +
+            "</div>"
+        ).join("");
+    } catch (_) {}
 }
 
-
 loadReceivedFiles();
-
-
-setInterval(
-    loadReceivedFiles,
-    2000
-);
-
+loadSharedTexts();
+setInterval(loadReceivedFiles, 3000);
+setInterval(loadSharedTexts, 3000);
 </script>
-
 </body>
+</html>""")
+        }
 
-</html>
-"""
-                )
-            }
-
-        sendResponse(
-            output,
-            "200 OK",
-            "text/html; charset=utf-8",
-            html.toByteArray(
-                Charsets.UTF_8
-            )
-        )
+        sendResponse(output, "200 OK", "text/html; charset=utf-8", html.toByteArray(Charsets.UTF_8))
     }
-
-    // =========================================================
-    // DOWNLOAD
-    // =========================================================
 
     private fun sendFile(
         output: BufferedOutputStream,
         path: String,
-        request: String
+        request: String,
+        isPreview: Boolean = false
     ) {
         val parts = path.removePrefix("/").split("/")
         if (parts.size < 2 || parts[0] != "download") {
@@ -1653,13 +854,14 @@ setInterval(
                 val safeName = escapeHeader(file.name)
                 val partial = rangeStart > 0L
                 val contentLength = if (totalSize > 0L) totalSize - rangeStart else -1L
+                val dispositionType = if (isPreview) "inline" else "attachment"
                 val header = buildString {
                     append(if (partial) "HTTP/1.1 206 Partial Content\r\n" else "HTTP/1.1 200 OK\r\n")
                     append("Content-Type: $mimeType\r\n")
                     append("Accept-Ranges: bytes\r\n")
                     if (partial && totalSize > 0L) append("Content-Range: bytes $rangeStart-${totalSize - 1}/$totalSize\r\n")
                     if (contentLength >= 0L) append("Content-Length: $contentLength\r\n")
-                    append("Content-Disposition: attachment; filename=\"$safeName\"\r\n")
+                    append("Content-Disposition: $dispositionType; filename=\"$safeName\"\r\n")
                     append("Cache-Control: no-cache\r\n")
                     append("Connection: close\r\n\r\n")
                 }
@@ -1667,20 +869,33 @@ setInterval(
                 output.flush()
 
                 val buffer = ByteArray(1024 * 1024)
+                var totalSent = rangeStart
+                var lastTime = System.currentTimeMillis()
+                var lastBytes = totalSent
+
                 while (true) {
                     val bytesRead = input.read(buffer)
                     if (bytesRead == -1) break
                     output.write(buffer, 0, bytesRead)
+                    totalSent += bytesRead
+                    val now = System.currentTimeMillis()
+                    if (now - lastTime >= 500) {
+                        val speed = ((totalSent - lastBytes) * 1000) / maxOf(1L, now - lastTime)
+                        onTransferProgress?.invoke(totalSent, totalSize, speed, file.name, false)
+                        lastTime = now
+                        lastBytes = totalSent
+                    }
                 }
                 output.flush()
+                onTransferProgress?.invoke(totalSent, totalSize, 0L, file.name, false)
 
                 synchronized(sharedFiles) {
                     file.downloadCount++
-                    android.util.Log.d("DropLink", "DOWNLOAD COMPLETE: ${file.name} count=${file.downloadCount}")
+                    Log.d(TAG, "DOWNLOAD COMPLETE: ${file.name} count=${file.downloadCount}")
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("DropLink", "DOWNLOAD ERROR", e)
+            Log.e(TAG, "DOWNLOAD ERROR", e)
         }
     }
 
@@ -1692,7 +907,7 @@ setInterval(
         return if (start in 0 until totalSize) start else INVALID_RANGE
     }
 
-    private fun skipFully(input: java.io.InputStream, bytesToSkip: Long): Boolean {
+    private fun skipFully(input: InputStream, bytesToSkip: Long): Boolean {
         var remaining = bytesToSkip
         while (remaining > 0L) {
             val skipped = input.skip(remaining)
@@ -1707,780 +922,229 @@ setInterval(
         return true
     }
 
-    companion object {
-        private const val INVALID_RANGE = -1L
-    }
-
-    // =========================================================
-    // UPLOAD
-    // =========================================================
-
     private fun handleUpload(
         input: BufferedInputStream,
         output: BufferedOutputStream,
         request: String
     ) {
-
-        val contentLength =
-            getHeader(
-                request,
-                "Content-Length"
-            )
-                ?.toLongOrNull()
-
-        if (
-            contentLength == null ||
-            contentLength < 0
-        ) {
-
-            sendText(
-                output,
-                "411 Length Required",
-                "Content-Length is required."
-            )
-
+        val rawContentLength = getHeader(request, "Content-Length")?.toLongOrNull()
+        if (rawContentLength == null || rawContentLength < 0) {
+            sendText(output, "411 Length Required", "Content-Length is required.")
             return
         }
+        val contentLength = rawContentLength
 
-        val encodedName =
-            getHeader(
-                request,
-                "X-File-Name"
-            )
+        val encodedName = getHeader(request, "X-File-Name")
+        val encodedRelativePath = getHeader(request, "X-Relative-Path")
 
-        val requestedName =
-            try {
+        val relativePath = try {
+            if (!encodedRelativePath.isNullOrBlank()) {
+                URLDecoder.decode(encodedRelativePath, "UTF-8")
+            } else null
+        } catch (_: Exception) { null }
 
-                if (
-                    encodedName
-                        ?.isNotBlank() ==
-                    true
-                ) {
+        val requestedName = try {
+            if (encodedName?.isNotBlank() == true) {
+                URLDecoder.decode(encodedName, "UTF-8")
+            } else "uploaded_file"
+        } catch (_: Exception) { "uploaded_file" }
 
-                    URLDecoder.decode(
-                        encodedName,
-                        "UTF-8"
-                    )
+        val mimeType = getHeader(request, "X-File-Type")?.takeIf { it.isNotBlank() }
+            ?: "application/octet-stream"
 
-                } else {
+        val destination = createUploadDestination(requestedName, mimeType, relativePath)
+        val category = destination.parentFile?.name ?: "Others"
 
-                    "uploaded_file"
-                }
-
-            } catch (_: Exception) {
-
-                "uploaded_file"
-            }
-
-        val mimeType =
-            getHeader(
-                request,
-                "X-File-Type"
-            )
-                ?.takeIf {
-                    it.isNotBlank()
-                }
-                ?: "application/octet-stream"
-
-        val destination =
-            createUploadDestination(
-                requestedName,
-                mimeType
-            )
-
-        val category =
-            destination.parentFile
-                ?.name
-                ?: "Others"
-
-        android.util.Log.d(
-            "DropLink",
-            "UPLOAD START: $requestedName"
-        )
+        Log.d(TAG, "UPLOAD START: $requestedName (rel: $relativePath)")
 
         try {
+            FileOutputStream(destination).use { fileOutput ->
+                val buffer = ByteArray(1024 * 1024)
+                var remaining = contentLength
+                var received = 0L
+                var lastTime = System.currentTimeMillis()
+                var lastBytes = 0L
 
-            FileOutputStream(
-                destination
-            ).use { fileOutput ->
-
-                val buffer =
-                    ByteArray(
-                        1024 * 1024
-                    )
-
-                var remaining =
-                    contentLength
-
-                var received =
-                    0L
-
-                while (
-                    remaining > 0
-                ) {
-
-                    val requested =
-                        minOf(
-                            buffer.size.toLong(),
-                            remaining
-                        ).toInt()
-
-                    val bytesRead =
-                        input.read(
-                            buffer,
-                            0,
-                            requested
-                        )
-
-                    if (
-                        bytesRead ==
-                        -1
-                    ) {
-
-                        throw Exception(
-                            "Connection closed before upload completed."
-                        )
+                while (remaining > 0) {
+                    val requested = minOf(buffer.size.toLong(), remaining).toInt()
+                    val bytesRead = input.read(buffer, 0, requested)
+                    if (bytesRead == -1) {
+                        throw Exception("Connection closed before upload completed.")
                     }
+                    fileOutput.write(buffer, 0, bytesRead)
+                    received += bytesRead
+                    remaining -= bytesRead
 
-                    fileOutput.write(
-                        buffer,
-                        0,
-                        bytesRead
-                    )
-
-                    received +=
-                        bytesRead
-
-                    remaining -=
-                        bytesRead
+                    val now = System.currentTimeMillis()
+                    if (now - lastTime >= 500) {
+                        val speed = ((received - lastBytes) * 1000) / maxOf(1L, now - lastTime)
+                        onTransferProgress?.invoke(received, contentLength, speed, destination.name, true)
+                        lastTime = now
+                        lastBytes = received
+                    }
                 }
 
                 fileOutput.flush()
+                onTransferProgress?.invoke(received, contentLength, 0L, destination.name, true)
 
-                // Refresh the complete Download/DropLink
-                // directory so receivedFiles always matches
-                // the files physically stored on disk.
-                scanReceivedFiles()
-
-                /*
-                 * Only expose the file after the
-                 * complete upload has finished.
-                 */
-                val receivedFile =
-                    ReceivedFile(
-                        name =
-                            destination.name,
-
-                        mimeType =
-                            mimeType,
-
-                        size =
-                            received,
-
-                        path =
-                            destination.absolutePath,
-
-                        category =
-                            category
+                try {
+                    MediaScannerConnection.scanFile(
+                        context,
+                        arrayOf(destination.absolutePath),
+                        arrayOf(mimeType),
+                        null
                     )
-
-                synchronized(
-                    receivedFiles
-                ) {
-
-                    receivedFiles.add(
-                        receivedFile
-                    )
+                } catch (mediaEx: Exception) {
+                    Log.w(TAG, "MediaScanner failed", mediaEx)
                 }
 
-                android.util.Log.d(
-                    "DropLink",
-                    "UPLOAD COMPLETE: " +
-                        destination.absolutePath
+                scanReceivedFiles()
+
+                val receivedFile = ReceivedFile(
+                    name = destination.name,
+                    mimeType = mimeType,
+                    size = received,
+                    path = destination.absolutePath,
+                    category = category
                 )
+                synchronized(receivedFiles) {
+                    receivedFiles.add(0, receivedFile)
+                }
+                Log.d(TAG, "UPLOAD COMPLETE: " + destination.absolutePath)
             }
 
-            sendText(
-                output,
-                "200 OK",
-                "Upload completed: ${destination.name}"
-            )
-
+            sendText(output, "200 OK", "Upload completed: ${destination.name}")
         } catch (e: Exception) {
-
-            try {
-
-                destination.delete()
-
-            } catch (_: Exception) {
-            }
-
-            android.util.Log.e(
-                "DropLink",
-                "UPLOAD ERROR",
-                e
-            )
-
-            sendText(
-                output,
-                "500 Internal Server Error",
-                "Upload failed: ${e.message}"
-            )
+            try { destination.delete() } catch (_: Exception) {}
+            Log.e(TAG, "UPLOAD ERROR", e)
+            sendText(output, "500 Internal Server Error", "Upload failed: ${e.message}")
         }
     }
-
-    // =========================================================
-    // CREATE UPLOAD DESTINATION
-    // =========================================================
 
     private fun createUploadDestination(
         originalName: String,
-        mimeType: String
+        mimeType: String,
+        relativePath: String? = null
     ): File {
+        val root = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DropLink")
+        if (!root.exists()) root.mkdirs()
 
-        val safeName =
-            sanitizeFileName(
-                originalName
-            )
+        if (!relativePath.isNullOrBlank()) {
+            val segments = relativePath
+                .replace('\\', '/')
+                .split('/')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && it != ".." && it != "." }
 
-        val directoryName =
-            getUploadDirectoryName(
-                safeName,
-                mimeType
-            )
-
-        val root =
-            File(
-                Environment
-                    .getExternalStoragePublicDirectory(
-                        Environment.DIRECTORY_DOWNLOADS
-                    ),
-                "DropLink"
-            )
-
-        val directory =
-            File(
-                root,
-                directoryName
-            )
-
-        if (
-            !directory.exists()
-        ) {
-
-            directory.mkdirs()
+            if (segments.isNotEmpty()) {
+                var targetDir = root
+                for (seg in segments.dropLast(1)) {
+                    targetDir = File(targetDir, sanitizeFileName(seg))
+                }
+                if (!targetDir.exists()) targetDir.mkdirs()
+                val safeFileName = sanitizeFileName(segments.last())
+                return createUniqueFile(targetDir, safeFileName)
+            }
         }
 
-        if (
-            !directory.exists()
-        ) {
+        val safeName = sanitizeFileName(originalName)
+        val directoryName = getUploadDirectoryName(safeName, mimeType)
+        val directory = File(root, directoryName)
+        if (!directory.exists()) directory.mkdirs()
+        if (!directory.exists()) throw Exception("Unable to create directory: " + directory.absolutePath)
 
-            throw Exception(
-                "Unable to create directory: " +
-                    directory.absolutePath
-            )
-        }
-
-        return createUniqueFile(
-            directory,
-            safeName
-        )
+        return createUniqueFile(directory, safeName)
     }
 
-    // =========================================================
-    // CATEGORY
-    // =========================================================
-
-    private fun getUploadDirectoryName(
-        fileName: String,
-        mimeType: String
-    ): String {
-
-        val type =
-            mimeType.lowercase()
-
-        if (
-            type.startsWith(
-                "image/"
-            )
-        ) {
-
-            return "Images"
-        }
-
-        if (
-            type.startsWith(
-                "video/"
-            )
-        ) {
-
-            return "Videos"
-        }
-
-        if (
-            type.startsWith(
-                "audio/"
-            )
-        ) {
-
-            return "Audio"
-        }
-
-        val extension =
-            fileName
-                .substringAfterLast(
-                    ".",
-                    ""
-                )
-                .lowercase()
-
-        return when (
-            extension
-        ) {
-
-            "jpg",
-            "jpeg",
-            "png",
-            "gif",
-            "webp",
-            "bmp",
-            "heic",
-            "heif" ->
-                "Images"
-
-            "mp4",
-            "mkv",
-            "avi",
-            "mov",
-            "webm",
-            "3gp",
-            "m4v" ->
-                "Videos"
-
-            "mp3",
-            "wav",
-            "aac",
-            "flac",
-            "ogg",
-            "m4a" ->
-                "Audio"
-
-            "pdf",
-            "doc",
-            "docx",
-            "xls",
-            "xlsx",
-            "ppt",
-            "pptx",
-            "txt",
-            "csv",
-            "rtf",
-            "odt" ->
-                "Documents"
-
-            "zip",
-            "rar",
-            "7z",
-            "tar",
-            "gz" ->
-                "Archives"
-
-            else ->
-                "Others"
-        }
+    private fun getUploadDirectoryName(fileName: String, mimeType: String): String {
+        val type = mimeType.lowercase()
+        if (type.startsWith("image/")) return "Images"
+        if (type.startsWith("video/")) return "Videos"
+        if (type.startsWith("audio/")) return "Audio"
+        if (type.contains("pdf") || type.contains("document") || type.contains("text/")) return "Documents"
+        if (type.contains("zip") || type.contains("compressed") || type.contains("tar") || type.contains("rar")) return "Archives"
+        return "Others"
     }
 
-    // =========================================================
-    // UNIQUE NAME
-    // =========================================================
+    private fun createUniqueFile(directory: File, fileName: String): File {
+        var file = File(directory, fileName)
+        if (!file.exists()) return file
 
-    private fun createUniqueFile(
-        directory: File,
-        originalName: String
-    ): File {
-
-        val original =
-            File(
-                directory,
-                originalName
-            )
-
-        if (
-            !original.exists()
-        ) {
-
-            return original
-        }
-
-        val dotIndex =
-            originalName
-                .lastIndexOf(".")
-
-        val baseName =
-            if (
-                dotIndex > 0
-            ) {
-
-                originalName
-                    .substring(
-                        0,
-                        dotIndex
-                    )
-
-            } else {
-
-                originalName
-            }
-
-        val extension =
-            if (
-                dotIndex > 0
-            ) {
-
-                originalName
-                    .substring(
-                        dotIndex
-                    )
-
-            } else {
-
-                ""
-            }
-
-        var counter =
-            1
-
-        while (true) {
-
-            val candidate =
-                File(
-                    directory,
-                    "$baseName ($counter)$extension"
-                )
-
-            if (
-                !candidate.exists()
-            ) {
-
-                return candidate
-            }
-
+        val nameWithoutExtension = fileName.substringBeforeLast(".", fileName)
+        val extension = if (fileName.contains(".")) "." + fileName.substringAfterLast(".") else ""
+        var counter = 1
+        while (file.exists()) {
+            file = File(directory, "$nameWithoutExtension ($counter)$extension")
             counter++
         }
+        return file
     }
 
-    // =========================================================
-    // SANITIZE
-    // =========================================================
+    private fun sanitizeFileName(name: String): String {
+        return name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+    }
 
-    private fun sanitizeFileName(
-        value: String
-    ): String {
-
-        var name =
-            value
-                .replace(
-                    "\\",
-                    "_"
-                )
-                .replace(
-                    "/",
-                    "_"
-                )
-                .replace(
-                    ":",
-                    "_"
-                )
-                .replace(
-                    "*",
-                    "_"
-                )
-                .replace(
-                    "?",
-                    "_"
-                )
-                .replace(
-                    "\"",
-                    "_"
-                )
-                .replace(
-                    "<",
-                    "_"
-                )
-                .replace(
-                    ">",
-                    "_"
-                )
-                .replace(
-                    "|",
-                    "_"
-                )
-                .replace(
-                    "\r",
-                    ""
-                )
-                .replace(
-                    "\n",
-                    ""
-                )
-                .trim()
-
-        if (
-            name.isEmpty() ||
-            name == "." ||
-            name == ".."
-        ) {
-
-            name =
-                "uploaded_file"
+    private fun sendSharedFilesJson(output: BufferedOutputStream) {
+        val files = getSharedFiles()
+        val json = buildString {
+            append("[")
+            files.forEachIndexed { index, file ->
+                if (index > 0) append(",")
+                append("{\"index\":$index,\"name\":\"${escapeJson(file.name)}\",\"size\":${file.size},\"mimeType\":\"${escapeJson(file.mimeType ?: "")}\",\"downloadCount\":${file.downloadCount}}")
+            }
+            append("]")
         }
+        sendResponse(output, "200 OK", "application/json; charset=utf-8", json.toByteArray(Charsets.UTF_8))
+    }
 
-        if (
-            name.length > 240
-        ) {
-
-            val dot =
-                name.lastIndexOf(".")
-
-            if (
-                dot > 0
-            ) {
-
-                val base =
-                    name
-                        .substring(
-                            0,
-                            dot
-                        )
-                        .take(220)
-
-                val extension =
-                    name
-                        .substring(
-                            dot
-                        )
-                        .take(20)
-
-                name =
-                    base +
-                    extension
-
-            } else {
-
-                name =
-                    name.take(240)
+    private fun sendReceivedFilesJson(output: BufferedOutputStream) {
+        val files = getReceivedFiles()
+        val json = buildString {
+            append("[")
+            files.forEachIndexed { index, file ->
+                if (index > 0) append(",")
+                append("{\"name\":\"${escapeJson(file.name)}\",\"size\":${file.size},\"mimeType\":\"${escapeJson(file.mimeType)}\",\"category\":\"${escapeJson(file.category)}\"}")
             }
+            append("]")
         }
-
-        return name
+        sendResponse(output, "200 OK", "application/json; charset=utf-8", json.toByteArray(Charsets.UTF_8))
     }
 
-    // =========================================================
-    // SHARED FILES JSON
-    // =========================================================
-
-    private fun sendSharedFilesJson(
-        output: BufferedOutputStream
-    ) {
-
-        val files =
-            getSharedFiles()
-
-        val json =
-            buildString {
-
-                append("[")
-
-                files.forEachIndexed {
-
-                    index,
-                    file ->
-
-                    if (
-                        index > 0
-                    ) {
-
-                        append(",")
-                    }
-
-                    append("{")
-
-                    append(
-                        "\"index\":"
-                    )
-
-                    append(
-                        index
-                    )
-
-                    append(",")
-
-                    append(
-                        "\"name\":\""
-                    )
-
-                    append(
-                        escapeJson(
-                            file.name
-                        )
-                    )
-
-                    append("\",")
-
-                    append(
-                        "\"mimeType\":\""
-                    )
-
-                    append(
-                        escapeJson(
-                            file.mimeType
-                                ?: "application/octet-stream"
-                        )
-                    )
-
-                    append("\",")
-
-                    append(
-                        "\"size\":"
-                    )
-
-                    append(
-                        file.size
-                    )
-
-                    append(",")
-
-                    append(
-                        "\"downloadCount\":"
-                    )
-
-                    append(
-                        file.downloadCount
-                    )
-
-                    append("}")
-                }
-
-                append("]")
+    private fun sendSharedTextsJson(output: BufferedOutputStream) {
+        val texts = getSharedTexts()
+        val json = buildString {
+            append("[")
+            texts.forEachIndexed { index, item ->
+                if (index > 0) append(",")
+                append("{\"id\":\"${escapeJson(item.id)}\",\"text\":\"${escapeJson(item.text)}\",\"timestamp\":${item.timestamp},\"sender\":\"${escapeJson(item.sender)}\"}")
             }
-
-        sendResponse(
-            output,
-            "200 OK",
-            "application/json; charset=utf-8",
-            json.toByteArray(
-                Charsets.UTF_8
-            )
-        )
+            append("]")
+        }
+        sendResponse(output, "200 OK", "application/json; charset=utf-8", json.toByteArray(Charsets.UTF_8))
     }
 
-    // =========================================================
-    // RECEIVED JSON
-    // =========================================================
-
-    private fun sendReceivedFilesJson(
-        output: BufferedOutputStream
-    ) {
-
-        val files =
-            getReceivedFiles()
-
-        val json =
-            buildString {
-
-                append("[")
-
-                files.forEachIndexed {
-
-                    index,
-                    file ->
-
-                    if (
-                        index > 0
-                    ) {
-
-                        append(",")
-                    }
-
-                    append("{")
-
-                    append(
-                        "\"name\":\""
-                    )
-
-                    append(
-                        escapeJson(
-                            file.name
-                        )
-                    )
-
-                    append("\",")
-
-                    append(
-                        "\"mimeType\":\""
-                    )
-
-                    append(
-                        escapeJson(
-                            file.mimeType
-                        )
-                    )
-
-                    append("\",")
-
-                    append(
-                        "\"size\":"
-                    )
-
-                    append(
-                        file.size
-                    )
-
-                    append(",")
-
-                    append(
-                        "\"path\":\""
-                    )
-
-                    append(
-                        escapeJson(
-                            file.path
-                        )
-                    )
-
-                    append("\",")
-
-                    append(
-                        "\"category\":\""
-                    )
-
-                    append(
-                        escapeJson(
-                            file.category
-                        )
-                    )
-
-                    append("\"")
-
-                    append("}")
-                }
-
-                append("]")
-            }
-
-        sendResponse(
-            output,
-            "200 OK",
-            "application/json; charset=utf-8",
-            json.toByteArray(
-                Charsets.UTF_8
-            )
-        )
+    private fun handleSharedTextPost(input: BufferedInputStream, output: BufferedOutputStream, request: String) {
+        val length = getHeader(request, "Content-Length")?.toIntOrNull() ?: 0
+        if (length <= 0) {
+            sendText(output, "400 Bad Request", "Empty text")
+            return
+        }
+        val buffer = ByteArray(minOf(length, 64 * 1024))
+        var read = 0
+        while (read < buffer.size) {
+            val r = input.read(buffer, read, buffer.size - read)
+            if (r == -1) break
+            read += r
+        }
+        val body = String(buffer, 0, read, Charsets.UTF_8).trim()
+        if (body.isNotEmpty()) {
+            addSharedText(body, "browser")
+            onTextReceived?.invoke(body)
+            sendResponse(output, "200 OK", "application/json; charset=utf-8", "{\"success\":true}".toByteArray(Charsets.UTF_8))
+        } else {
+            sendText(output, "400 Bad Request", "Empty body")
+        }
     }
-
-    // =========================================================
-    // RESPONSE
-    // =========================================================
 
     private fun sendResponse(
         output: BufferedOutputStream,
@@ -2488,205 +1152,42 @@ setInterval(
         contentType: String,
         data: ByteArray
     ) {
-
-        val header =
-            buildString {
-
-                append(
-                    "HTTP/1.1 $status\r\n"
-                )
-
-                append(
-                    "Content-Type: $contentType\r\n"
-                )
-
-                append(
-                    "Content-Length: ${data.size}\r\n"
-                )
-
-                append(
-                    "Cache-Control: no-cache\r\n"
-                )
-
-                append(
-                    "Connection: close\r\n"
-                )
-
-                append(
-                    "\r\n"
-                )
-            }
-
-        output.write(
-            header.toByteArray(
-                Charsets.UTF_8
-            )
-        )
-
-        output.write(
-            data
-        )
-
+        val header = "HTTP/1.1 $status\r\n" +
+            "Content-Type: $contentType\r\n" +
+            "Content-Length: ${data.size}\r\n" +
+            "Access-Control-Allow-Origin: *\r\n" +
+            "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
+            "Access-Control-Allow-Headers: *\r\n" +
+            "Connection: close\r\n\r\n"
+        output.write(header.toByteArray(Charsets.UTF_8))
+        output.write(data)
         output.flush()
     }
 
-    // =========================================================
-    // TEXT RESPONSE
-    // =========================================================
-
-    private fun sendText(
-        output: BufferedOutputStream,
-        status: String,
-        text: String
-    ) {
-
-        sendResponse(
-            output,
-            status,
-            "text/plain; charset=utf-8",
-            text.toByteArray(
-                Charsets.UTF_8
-            )
-        )
+    private fun sendText(output: BufferedOutputStream, status: String, text: String) {
+        sendResponse(output, status, "text/plain; charset=utf-8", text.toByteArray(Charsets.UTF_8))
     }
 
-    // =========================================================
-    // HTML ESCAPE
-    // =========================================================
-
-    private fun escapeHtml(
-        value: String
-    ): String {
-
-        return value
-            .replace(
-                "&",
-                "&amp;"
-            )
-            .replace(
-                "<",
-                "&lt;"
-            )
-            .replace(
-                ">",
-                "&gt;"
-            )
-            .replace(
-                "\"",
-                "&quot;"
-            )
-            .replace(
-                "'",
-                "&#039;"
-            )
+    private fun escapeHtml(value: String): String {
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#039;")
     }
 
-    // =========================================================
-    // JSON ESCAPE
-    // =========================================================
-
-    private fun escapeJson(
-        value: String
-    ): String {
-
-        return value
-            .replace(
-                "\\",
-                "\\\\"
-            )
-            .replace(
-                "\"",
-                "\\\""
-            )
-            .replace(
-                "\n",
-                "\\n"
-            )
-            .replace(
-                "\r",
-                "\\r"
-            )
-            .replace(
-                "\t",
-                "\\t"
-            )
+    private fun escapeHtmlJs(value: String): String {
+        return value.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"").replace("\n", " ").replace("\r", "")
     }
 
-    // =========================================================
-    // HTTP HEADER ESCAPE
-    // =========================================================
-
-    private fun escapeHeader(
-        value: String
-    ): String {
-
-        return value
-            .replace(
-                "\\",
-                ""
-            )
-            .replace(
-                "\"",
-                ""
-            )
-            .replace(
-                "\r",
-                ""
-            )
-            .replace(
-                "\n",
-                ""
-            )
+    private fun escapeJson(value: String): String {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
     }
 
-    // =========================================================
-    // SIZE
-    // =========================================================
+    private fun escapeHeader(value: String): String {
+        return value.replace("\\", "").replace("\"", "").replace("\r", "").replace("\n", "")
+    }
 
-    private fun formatSize(
-        size: Long
-    ): String {
-
-        if (
-            size < 1024
-        ) {
-
-            return "$size B"
-        }
-
-        if (
-            size <
-            1024L * 1024L
-        ) {
-
-            return "%.1f KB".format(
-                size / 1024.0
-            )
-        }
-
-        if (
-            size <
-            1024L *
-            1024L *
-            1024L
-        ) {
-
-            return "%.1f MB".format(
-                size /
-                    (
-                        1024.0 *
-                        1024.0
-                    )
-            )
-        }
-
-        return "%.2f GB".format(
-            size /
-                (
-                    1024.0 *
-                    1024.0 *
-                    1024.0
-                )
-        )
+    private fun formatSize(size: Long): String {
+        if (size < 1024) return "$size B"
+        if (size < 1024L * 1024L) return "%.1f KB".format(size / 1024.0)
+        if (size < 1024L * 1024L * 1024L) return "%.1f MB".format(size / (1024.0 * 1024.0))
+        return "%.2f GB".format(size / (1024.0 * 1024.0 * 1024.0))
     }
 }
